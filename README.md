@@ -8,6 +8,8 @@ Open-source local multi-turn simulation and behavioral regression engine for AI 
 
 **Repository:** [github.com/vantage-ai-eng/vantage-core](https://github.com/vantage-ai-eng/vantage-core)
 
+**Developer guide:** [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) — full step-by-step walkthrough
+
 ---
 
 ## Why vantage-core?
