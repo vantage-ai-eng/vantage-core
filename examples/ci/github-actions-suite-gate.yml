@@ -1,0 +1,44 @@
+# Example GitHub Actions required check — suite + SHA bind.
+# Mark this job as a required status check on the protected branch.
+#
+# Bind: GITHUB_SHA / GITHUB_REF / pull_request context are picked up
+# automatically by vantage-core and stamped onto decision.bind.
+name: vantage-core suite gate
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  suite-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install vantage-core
+        run: pip install vantage-core
+
+      - name: Validate suite
+        run: vantage-core suite validate suites/starter.suite.yaml
+
+      - name: Run suite (blocks PR on fail)
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          mkdir -p decisions
+          vantage-core suite run suites/starter.suite.yaml --json > decisions/suite.json
+          echo "exit=$?"
+          # Human one-liner from bind (when SHA known):
+          python -c "import json; d=json.load(open('decisions/suite.json')); print(d.get('bind',{}).get('headline') or 'no bind')"
+
+      - name: Upload decision artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtimeai-decision
+          path: decisions/suite.json

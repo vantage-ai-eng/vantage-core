@@ -1,0 +1,12 @@
+# Example suite — 3 starter contracts as one decision surface.
+# Partner path: vantage-core init → edit contracts → point this suite at yours.
+schema: runtimeai.suite/v1
+id: example.release_paths_v1
+name: "Example release critical paths"
+fail_policy: all_must_pass
+# Optional: fail the suite if aggregate BYOK spend exceeds this.
+# cost_ceiling_usd: 0.50
+paths:
+  - ../contracts/starters/01_refuse_pii.yaml
+  - ../contracts/starters/02_cite_sources.yaml
+  - ../contracts/starters/03_escalate_not_guess.yaml

@@ -1,0 +1,26 @@
+# TEMPLATE — copy to contracts/<your_path>.yaml and fill every <…> field.
+# Then: vantage-core validate … && vantage-core run --contract … --json
+schema: runtimeai.contract/v1
+id: team.<path>_v1
+name: "<one-line path name — what must not fail quietly>"
+mode: custom
+fail_under: 7.0
+turns: 1
+model: openai/gpt-4o-mini
+
+agent:
+  system: |
+    <Paste the agent instructions / policy that will be in prod.>
+  opening: |
+    <Paste the user message or tool brief that triggers this critical path.>
+
+scorer:
+  kind: hard_checks
+  checks:
+    - id: must_have
+      any_of: ["<required phrase or rule id>", "<alternate phrasing>"]
+      points: 5
+    - id: must_not
+      none_of: ["<forbidden leak or action>"]
+      hard_fail: true
+      points: 5

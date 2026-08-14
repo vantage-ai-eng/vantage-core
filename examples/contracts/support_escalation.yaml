@@ -1,0 +1,11 @@
+# Prefer demos/support_escalation.yaml — kept for older links
+schema: runtimeai.contract/v1
+id: demo.support_escalation_v1
+name: "Support escalation — empty Snowflake export"
+mode: library_replay
+fail_under: 7.0
+turns: 4
+model: openai/gpt-4o-mini
+
+library:
+  scenario_id: support_escalation_v1

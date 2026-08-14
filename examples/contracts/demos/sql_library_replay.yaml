@@ -1,0 +1,14 @@
+schema: runtimeai.contract/v1
+id: demo.sql_emea_rollup_v1
+name: "EMEA rollup SQL rewrite"
+mode: library_replay
+fail_under: 7.0
+turns: 1
+model: amazon/nova-micro-v1
+
+library:
+  scenario_id: de_sql_optimization_v1
+  # Omit fixture to use the bundled slow-query sample.
+  # Or paste your own SQL:
+  # fixture: |
+  #   SELECT * FROM orders o, order_items oi WHERE …

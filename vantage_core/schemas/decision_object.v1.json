@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://www.vantageai.cc/schemas/runtimeai.decision/v1.json",
+  "title": "RuntimeAI decision object",
+  "description": "Portable CI artifact for a single check-ride ship decision. stdout of `vantage-core run --json`.",
+  "type": "object",
+  "required": [
+    "schema",
+    "generated_at",
+    "runner",
+    "contract",
+    "scorecard",
+    "usd",
+    "exit",
+    "session_id"
+  ],
+  "properties": {
+    "schema": {
+      "const": "runtimeai.decision/v1"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "runner": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "required": ["scenario_id", "model", "fail_under", "turns"],
+      "properties": {
+        "scenario_id": { "type": "string", "minLength": 1 },
+        "scenario_sha256": { "type": ["string", "null"] },
+        "turns": { "type": "integer", "minimum": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "fail_under": { "type": "number" },
+        "config_stamp": {
+          "type": "object",
+          "properties": {
+            "rubric_id": { "type": ["string", "null"] },
+            "model_costs_sha256": { "type": ["string", "null"] },
+            "git_sha": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "scorecard": {
+      "type": "object",
+      "required": ["out_of_10", "pass_gate"],
+      "properties": {
+        "out_of_10": { "type": ["number", "null"] },
+        "total_25": { "type": ["integer", "null"] },
+        "rubric": { "type": "object" },
+        "status": { "type": "string" },
+        "pass_gate": {
+          "type": "object",
+          "required": ["passed", "fail_under", "blockers"],
+          "properties": {
+            "fail_under": { "type": "number" },
+            "score_out_of_10": { "type": ["number", "null"] },
+            "score_meets_bar": { "type": "boolean" },
+            "trust_level": { "type": "string" },
+            "closure_ok": { "type": ["boolean", "null"] },
+            "blockers": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "passed": { "type": "boolean" },
+            "headline": { "type": "string" }
+          }
+        }
+      }
+    },
+    "usd": {
+      "type": "object",
+      "required": ["est_eval"],
+      "properties": {
+        "est_eval": { "type": ["number", "null"] }
+      }
+    },
+    "exit": {
+      "type": "object",
+      "required": ["code", "passed"],
+      "properties": {
+        "code": { "type": "integer", "enum": [0, 1] },
+        "passed": { "type": "boolean" }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "payload_sha256": { "type": "string", "minLength": 64, "maxLength": 64 }
+      }
+    },
+    "session_id": { "type": "string" },
+    "elapsed_s": { "type": ["number", "null"] },
+    "error": {},
+    "bind": {
+      "type": "object",
+      "description": "Optional SHA/PR bind when git identity is known (CI env or git rev-parse).",
+      "properties": {
+        "git_sha": { "type": "string" },
+        "git_sha_short": { "type": "string" },
+        "git_ref": { "type": ["string", "null"] },
+        "pr_number": { "type": ["integer", "null"] },
+        "pr_url": { "type": ["string", "null"] },
+        "source": { "type": ["string", "null"] },
+        "headline": { "type": "string" }
+      }
+    },
+    "suite": {
+      "type": "object",
+      "description": "Present on suite-level decisions (runtimeai.suite/v1 aggregate)."
+    },
+    "out_of_10": { "type": ["number", "null"] },
+    "total_25": { "type": ["integer", "null"] },
+    "est_usd": { "type": ["number", "null"] },
+    "fail_under": { "type": "number" },
+    "passed": { "type": "boolean" },
+    "exit_code": { "type": "integer" },
+    "scenario_id": { "type": "string" },
+    "model": { "type": "string" },
+    "status": { "type": "string" },
+    "rubric": { "type": "object" },
+    "pass_gate": { "type": "object" }
+  },
+  "additionalProperties": true
+}

@@ -1,4 +1,20 @@
-from vantage_core.runner import LocalSimulationRunner
-from vantage_core.metrics import TurnTelemetry, SimulationReport
+"""vantage-core — RuntimeAI check-ride CLI and portable decision artifact."""
 
-__all__ = ["LocalSimulationRunner", "TurnTelemetry", "SimulationReport"]
+from __future__ import annotations
+
+__version__ = "0.1.6"
+
+from vantage_core.decision import (
+    SCHEMA_ID,
+    build_decision_object,
+    payload_sha256,
+    validate_decision_object,
+)
+
+__all__ = [
+    "SCHEMA_ID",
+    "__version__",
+    "build_decision_object",
+    "payload_sha256",
+    "validate_decision_object",
+]

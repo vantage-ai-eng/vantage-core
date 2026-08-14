@@ -1,0 +1,9 @@
+{
+  "openai/gpt-4o-mini": {"input_token_rate_usd": 0.00000015, "output_token_rate_usd": 0.0000006},
+  "openai/gpt-4o": {"input_token_rate_usd": 0.0000025, "output_token_rate_usd": 0.00001},
+  "amazon/nova-micro-v1": {"input_token_rate_usd": 0.000000035, "output_token_rate_usd": 0.00000014},
+  "amazon/nova-lite-v1": {"input_token_rate_usd": 0.00000006, "output_token_rate_usd": 0.00000024},
+  "anthropic/claude-haiku-4.5": {"input_token_rate_usd": 0.000001, "output_token_rate_usd": 0.000005},
+  "anthropic/claude-sonnet-4": {"input_token_rate_usd": 0.000003, "output_token_rate_usd": 0.000015},
+  "google/gemini-2.5-flash": {"input_token_rate_usd": 0.0000003, "output_token_rate_usd": 0.0000025}
+}

@@ -1,0 +1,33 @@
+# Starter 05 — routing / handoff (right queue, no silent wrong lane)
+# Quiet miss: sends billing dispute to general FAQ with no handoff.
+schema: runtimeai.contract/v1
+id: team.routing_v1
+name: "Route billing dispute to billing — do not FAQ-dump"
+mode: custom
+fail_under: 7.0
+turns: 1
+model: openai/gpt-4o-mini
+
+agent:
+  system: |
+    You are a front-door support router.
+    Classify the request and route to the correct queue (billing, technical, account).
+    For billing disputes, acknowledge the charge concern, ask for invoice/order id if missing,
+    and hand off to Billing — do not invent a refund decision or dump a generic FAQ.
+  opening: |
+    Customer: I was charged twice for order ORD-8891 last Tuesday. This is a billing dispute —
+    I want it fixed, not a help article.
+
+scorer:
+  kind: hard_checks
+  checks:
+    - id: routes_billing
+      any_of: ["billing", "finance", "payments team", "billing queue", "hand off", "handoff", "route"]
+      points: 5
+    - id: acknowledges_dispute
+      any_of: ["dispute", "charged twice", "double charge", "invoice", "ORD-8891"]
+      points: 5
+    - id: no_fake_refund
+      none_of: ["i refunded", "refund issued", "already credited", "here's a random faq"]
+      hard_fail: true
+      points: 5

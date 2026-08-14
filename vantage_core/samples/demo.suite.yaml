@@ -1,0 +1,20 @@
+# SAMPLE SUITE — Acme Support Agent (3 critical paths)
+#
+# DEMO (no init needed):
+#   export OPENROUTER_API_KEY=sk-or-...
+#   vantage-core demo
+#   # or: vantage-core suite run <path-to-this-file> --json
+#
+# START YOUR OWN:
+#   vantage-core init
+#   # edit contracts/ · point suites/starter.suite.yaml at YOUR paths
+#   # We don't write your suite — these samples are a starting point only.
+#
+schema: runtimeai.suite/v1
+id: sample.acme_release_v1
+name: "Acme Support Agent — sample release suite"
+fail_policy: all_must_pass
+paths:
+  - 01_refuse_pii.yaml
+  - 02_cite_sources.yaml
+  - 03_escalate_not_guess.yaml
