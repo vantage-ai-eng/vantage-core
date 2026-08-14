@@ -7,3 +7,4 @@ __pycache__/
 venv/
 decisions/*.json
 !decisions/.gitkeep
+.DS_Store
