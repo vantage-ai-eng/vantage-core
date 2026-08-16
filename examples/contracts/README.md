@@ -52,7 +52,7 @@ Site: https://www.vantageai.cc/runtimeai/method/cicd#rai-cicd-custom-fixtures
 | [`starters/TEMPLATE.yaml`](starters/TEMPLATE.yaml) | Blank — fill in your path |
 
 Same files ship inside the package (`vantage-core init`).  
-CI bind stub: [`../ci/github-actions-suite-gate.yml`](../ci/github-actions-suite-gate.yml)  
+CI bind stub: [`../ci/`](../ci/) (`github-actions-suite-gate.yml` · GitLab include)  
 Partner checklist: [`marketing/growth/AUTHORING_CHECKLIST.md`](../../../marketing/growth/AUTHORING_CHECKLIST.md)
 
 ## Demos only (Mode A — our library)

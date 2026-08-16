@@ -8,9 +8,9 @@ artifact — with optional **SHA/PR bind** — **no monorepo `server/` required*
 Opik / Braintrust / LangSmith experiment or trace UI. Ingest from their telemetry/exports
 (`ingest` → path plans + optional drafts); plug into CI; return clarity on the decision.
 
-**Version:** 0.1.6 — richer `ingest` (extract → prior detectors → drafts) · 0.1.5 still-trust
-ritual (`suite rerun --baseline`, `--reps`/`--pass-k`, pass/review/block) · ledger / demo /
-suite / bind from 0.1.2–0.1.4.
+**Version:** 0.1.7 — still-trust CI (`suite rerun --baseline latest`, `--ci-comment`, GitHub/GitLab
+stubs) · 0.1.6 richer `ingest` · 0.1.5 ritual (`--reps`/`--pass-k`, pass/review/block) · ledger /
+demo / suite / bind from 0.1.2–0.1.4.
 
 Partner authoring: [CI · your suite](https://www.vantageai.cc/runtimeai/method/cicd#rai-cicd-custom-fixtures)
 
@@ -34,19 +34,16 @@ Requires `OPENROUTER_API_KEY` (BYOK). Live runs fail loudly without it.
 
 ## Stranger path (under 30 min)
 
-**A — Live demo (sample contracts, no editing)**
+**A — 60-second demo (no API key, no editing)**
 
 ```bash
-export OPENROUTER_API_KEY=sk-or-...
-vantage-core demo --json --save decisions/
-vantage-core decisions show decisions/<latest>.json
-echo $?
+vantage-core demo
 ```
 
-Runs the bundled **Acme** 3-path sample suite (refuse · cite · escalate) and writes a dated
-decision under `decisions/`. Browse: [`examples/samples/`](examples/samples/) · also shipped inside the package.
+Reads the **SAY:** lines out loud. Shows last-ship PASS → after-change BLOCK → the PR comment.
+Needs a key only for a live model run: `vantage-core demo --live`.
 
-**Before / after talk track** (no live run): [`examples/decisions/`](examples/decisions/) —
+**Before / after files** (same story): [`examples/decisions/`](examples/decisions/) —
 
 ```bash
 vantage-core decisions show examples/decisions/before_pass.json
@@ -122,13 +119,13 @@ Still-trust: after a model/prompt/policy change, re-run and compare to a prior d
 ```bash
 # 1) Baseline (before the change)
 vantage-core suite run suites/starter.suite.yaml --json --save decisions/
-# note the saved path, e.g. decisions/2026-08-01T1500Z_team.release_paths_v1.json
 
-# 2) Change lands → still-trust re-run
+# 2) Change lands → still-trust re-run vs newest dated decision
 vantage-core suite rerun suites/starter.suite.yaml \
-  --baseline decisions/<prior>.json \
+  --baseline latest \
   --json --save decisions/
 echo $?   # current gate only (not “same as baseline”)
+# or: --baseline decisions/<prior>.json   ·   --baseline decisions/
 ```
 
 The new decision has a fresh `session_id` / `generated_at`. With `--baseline`, JSON includes
@@ -167,6 +164,7 @@ Filenames: `YYYY-MM-DDTHHMMZ_<suite-or-contract-id>.json`.
 ```bash
 vantage-core demo --json --save decisions/          # or: suite run … --save decisions/
 vantage-core decisions list [dir]                   # default: ./decisions
+vantage-core decisions latest                       # path of newest JSON (scripts / --baseline latest)
 vantage-core decisions show decisions/<file>.json   # human view: score, cost, bind, paths
 ```
 
@@ -191,7 +189,16 @@ PR number from `GITHUB_REF` (`refs/pull/N/…`), `VANTAGE_PR_NUMBER`, or `GITHUB
 
 Bind fields are included in `integrity.payload_sha256`.
 
-CI stub (mark as **required** check): [`examples/ci/github-actions-suite-gate.yml`](examples/ci/github-actions-suite-gate.yml)
+On GitHub Actions / GitLab CI, `--ci-comment` posts bind + `compare_to_baseline` on the PR/MR
+(one living comment, updated in place). Token from `GITHUB_TOKEN` / `CI_JOB_TOKEN` — no GitHub App.
+
+```bash
+vantage-core ci stub github    # .github/workflows/vantage-core-suite-gate.yml
+vantage-core ci stub gitlab    # .gitlab-ci.vantage-core.yml
+# or: vantage-core init --ci
+```
+
+CI stubs (mark as **required** check): [`examples/ci/`](examples/ci/) — PRs **re-decide vs last ship**, they do not one-shot `suite run`.
 
 ## Contract format (`runtimeai.contract/v1`)
 
@@ -273,8 +280,8 @@ vantage-core validate scorecard.json
 3. Tag and release:
 
 ```bash
-git tag vantage-core-v0.1.6
-git push origin vantage-core-v0.1.6
+git tag vantage-core-v0.1.7
+git push origin vantage-core-v0.1.7
 # Create a GitHub Release for that tag → workflow publishes
 ```
 
@@ -305,6 +312,15 @@ vantage-core ingest examples/ingest/langsmith_export_sample.json \
 
 Then edit drafts → `suite run` / `suite rerun --baseline`.
 **Claim:** export/manual complement; drafts are suggestions until they own them.
+
+## Changelog (0.1.7)
+
+- **Still-trust CI** — GitHub Actions + GitLab stubs re-decide vs last ship (`suite rerun --baseline`)
+- **`--baseline latest`** (or a directory) — newest `runtimeai.decision/v1` in `decisions/`
+- **`decisions latest`** — print that path for scripts
+- **`--ci-comment`** — post bind headline + compare on the GitHub PR / GitLab MR
+- **`vantage-core ci stub github|gitlab`** · `init --ci`
+- **`vantage-core demo`** — 60s talk track with no API key; `--live` for the sample suite
 
 ## Changelog (0.1.6)
 

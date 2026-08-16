@@ -175,6 +175,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     _print_decision(decision, as_json=args.json)
     _maybe_save_decision(decision, getattr(args, "save", None))
+    _maybe_ci_comment(decision, args)
     return _decision_exit_code(decision)
 
 
@@ -233,13 +234,14 @@ def cmd_suite_run(args: argparse.Namespace) -> int:
 
     _print_decision(decision, as_json=args.json)
     _maybe_save_decision(decision, getattr(args, "save", None))
+    _maybe_ci_comment(decision, args)
     return _decision_exit_code(decision)
 
 
 def cmd_suite_rerun(args: argparse.Namespace) -> int:
     """Re-run a suite for still-trust; optional compare to a prior decision JSON."""
     _load_env()
-    from vantage_core.ledger import load_decision
+    from vantage_core.ledger import load_decision, resolve_baseline_spec
     from vantage_core.llm_openrouter import openrouter_api_key
     from vantage_core.suite import load_suite, run_suite, validate_suite_files
 
@@ -251,12 +253,24 @@ def cmd_suite_rerun(args: argparse.Namespace) -> int:
     baseline = None
     baseline_path = None
     if getattr(args, "baseline", None):
-        baseline_path = Path(args.baseline)
+        try:
+            baseline_path = resolve_baseline_spec(
+                args.baseline,
+                baseline_dir=getattr(args, "baseline_dir", None),
+                save_dir=getattr(args, "save", None),
+            )
+        except FileNotFoundError as exc:
+            print(f"vantage-core suite rerun: {exc}", file=sys.stderr)
+            return 1
+        if baseline_path is None:
+            print("vantage-core suite rerun: empty --baseline", file=sys.stderr)
+            return 1
         try:
             baseline = load_decision(baseline_path)
         except Exception as exc:
             print(f"vantage-core suite rerun: cannot load baseline: {exc}", file=sys.stderr)
             return 1
+        print(f"baseline  {baseline_path}", file=sys.stderr)
 
     try:
         suite = load_suite(path)
@@ -283,6 +297,7 @@ def cmd_suite_rerun(args: argparse.Namespace) -> int:
 
     _print_decision(decision, as_json=args.json)
     _maybe_save_decision(decision, getattr(args, "save", None))
+    _maybe_ci_comment(decision, args)
     # Exit reflects *current* gate — not whether we matched the baseline.
     return _decision_exit_code(decision)
 
@@ -352,7 +367,7 @@ def cmd_schema(_args: argparse.Namespace) -> int:
     print(
         "fields  contract + scorecard.pass_gate + usd.est_eval + exit + "
         "integrity.payload_sha256 + bind (when SHA known) + suite (suite run) + "
-        "compare_to_baseline (suite rerun --baseline)"
+        "compare_to_baseline (suite rerun --baseline latest) + --ci-comment (PR/MR)"
     )
     from vantage_core.library import list_library_ids
 
@@ -380,6 +395,33 @@ def _maybe_save_decision(decision: dict, save_dir: str | None) -> None:
 
     path = save_decision(decision, save_dir)
     print(f"saved  {path}", file=sys.stderr)
+
+
+def _maybe_ci_comment(decision: dict, args: argparse.Namespace) -> None:
+    enabled = bool(getattr(args, "ci_comment", False))
+    comment_file = getattr(args, "ci_comment_file", None)
+    if not enabled and not comment_file:
+        return
+    from vantage_core.ci_comment import maybe_post_ci_comment
+
+    result = maybe_post_ci_comment(
+        decision, enabled=enabled, comment_file=comment_file
+    )
+    if not result:
+        return
+    if result.get("file"):
+        print(f"ci_comment_file  {result['file']}", file=sys.stderr)
+    if result.get("error"):
+        print(f"ci_comment  skipped: {result['error']}", file=sys.stderr)
+        return
+    if result.get("skipped"):
+        print(f"ci_comment  skipped: {result['skipped']}", file=sys.stderr)
+        return
+    host = result.get("host") or "ci"
+    action = result.get("action") or "posted"
+    url = result.get("html_url") or ""
+    extra = f"  {url}" if url else ""
+    print(f"ci_comment  {host} {action}{extra}", file=sys.stderr)
 
 
 def _decision_exit_code(decision: dict[str, Any]) -> int:
@@ -414,6 +456,22 @@ def cmd_decisions_list(args: argparse.Namespace) -> int:
         suite = data.get("suite") if isinstance(data.get("suite"), dict) else None
         label = (suite or {}).get("id") or data.get("scenario_id") or "—"
         print(f"  {path.name}  {when}  {label}  {verdict}")
+    return 0
+
+
+def cmd_decisions_latest(args: argparse.Namespace) -> int:
+    from vantage_core.ledger import latest_decision_path
+
+    directory = Path(args.dir or "decisions")
+    path = latest_decision_path(directory)
+    if path is None:
+        print(f"No decision JSON in {directory.resolve()}", file=sys.stderr)
+        print(
+            "Hint: vantage-core demo --save decisions/   # or suite run … --save decisions/",
+            file=sys.stderr,
+        )
+        return 1
+    print(path)
     return 0
 
 
@@ -472,13 +530,103 @@ def cmd_decisions_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _demo_fixture_paths() -> tuple[Path, Path]:
+    pkg = Path(__file__).resolve().parent / "demo_fixtures"
+    before = pkg / "before_pass.json"
+    after = pkg / "after_fail.json"
+    if before.is_file() and after.is_file():
+        return before, after
+    examples = Path(__file__).resolve().parents[1] / "examples" / "decisions"
+    return examples / "before_pass.json", examples / "after_fail.json"
+
+
+def cmd_demo_offline(args: argparse.Namespace) -> int:
+    """60-second talk track from saved before/after — no API key."""
+    from vantage_core.ci_comment import format_comment
+    from vantage_core.ledger import format_decision_human, format_decisions_grid, load_decision
+    from vantage_core.suite import compare_to_baseline
+
+    before_p, after_p = _demo_fixture_paths()
+    if not before_p.is_file() or not after_p.is_file():
+        print("bundled before/after fixtures not found", file=sys.stderr)
+        return 1
+    before = load_decision(before_p)
+    after = load_decision(after_p)
+    cmp = compare_to_baseline(after, before, baseline_path=before_p)
+    after_view = dict(after)
+    after_view["compare_to_baseline"] = cmp
+    comment = format_comment(after_view)
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "mode": "offline",
+                    "before": str(before_p),
+                    "after": str(after_p),
+                    "compare_to_baseline": cmp,
+                    "pr_comment": comment,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    print("=" * 64)
+    print("  60-SECOND DEMO  ·  no API key  ·  saved examples")
+    print("  Seat: ship / still-trust gate. Not traces.")
+    print("=" * 64)
+    print()
+    print("SAY:  Last week this agent was cleared to ship.")
+    print()
+    print("--- LAST SHIP (PASS) ---")
+    print(format_decision_human(before, path=before_p))
+    print()
+    print("SAY:  Then they changed a prompt. Same suite. Re-decide.")
+    print()
+    print("--- AFTER THE CHANGE (BLOCK) ---")
+    print(format_decision_human(after, path=after_p))
+    print()
+    print("--- SIDE BY SIDE ---")
+    print(format_decisions_grid([(before_p, before), (after_p, after)]))
+    print()
+    print("SAY:  Cite path failed. Bound to the PR. This is the comment CI posts:")
+    print()
+    print("--- WHAT SHOWS ON THE PR ---")
+    print(comment)
+    print("SAY:  To put this on every pull request:")
+    print("        vantage-core ci stub github")
+    print("      Mark that job as a required check.")
+    print("      Secret: OPENROUTER_API_KEY only.")
+    print()
+    print("Live sample (a few cents, needs a key):")
+    print("  export OPENROUTER_API_KEY=sk-or-...")
+    print("  vantage-core demo --live")
+    print("=" * 64)
+    return 0
+
+
 def cmd_demo(args: argparse.Namespace) -> int:
-    """Run the bundled Acme sample suite (demo-ready, no init required)."""
+    """Run the bundled Acme sample suite, or the no-key talk track."""
     _load_env()
     from vantage_core.llm_openrouter import openrouter_api_key
     from vantage_core.suite import load_suite, run_suite, validate_suite_files
 
-    if not openrouter_api_key():
+    force_offline = bool(getattr(args, "offline", False))
+    force_live = bool(getattr(args, "live", False)) and not force_offline
+    has_key = bool(openrouter_api_key())
+
+    if force_offline or (not force_live and not has_key):
+        if not force_offline and not has_key:
+            print(
+                "No OPENROUTER_API_KEY — showing the 60-second talk track (saved examples).",
+                file=sys.stderr,
+            )
+            print("Live sample: export OPENROUTER_API_KEY=sk-or-... && vantage-core demo --live", file=sys.stderr)
+            print(file=sys.stderr)
+        return cmd_demo_offline(args)
+
+    if not has_key:
         print(_BYOK_HINT, file=sys.stderr)
         return 2
 
@@ -516,10 +664,10 @@ def cmd_demo(args: argparse.Namespace) -> int:
     _maybe_save_decision(decision, getattr(args, "save", None))
     if not args.json:
         print()
-        print("Next for a partner:")
-        print("  vantage-core init          # copy samples → ./samples + editable ./contracts")
-        print("  # edit contracts/ · suite run suites/starter.suite.yaml")
-        print("  vantage-core decisions show decisions/<file>.json")
+        print("Next (still-trust on every PR):")
+        print("  vantage-core ci stub github")
+        print("  vantage-core init            # then edit contracts/ — we don't write your suite")
+        print("  vantage-core suite rerun suites/starter.suite.yaml --baseline latest --save decisions/")
     return _decision_exit_code(decision)
 
 
@@ -606,6 +754,7 @@ def _write_project_readme(root: Path, *, force: bool) -> None:
         - `samples/` — known-good demo pack (run as-is)
         - `contracts/` — **your** working copies (edit these)
         - `decisions/` — dated JSON ledger (free; not hosted history)
+        - CI: `vantage-core ci stub github` (or `init --ci`)
         - Checklist: https://github.com/simonbright/vantage/blob/main/marketing/growth/AUTHORING_CHECKLIST.md
         - CI docs: https://www.vantageai.cc/runtimeai/method/cicd
         """
@@ -739,6 +888,16 @@ def cmd_init(args: argparse.Namespace) -> int:
     _write_gitignore(root, force=args.force)
     _write_project_readme(root, force=args.force)
 
+    if getattr(args, "ci", False):
+        from vantage_core.ci_stub import default_stub_path, write_stub
+
+        dest = root / default_stub_path("github")
+        try:
+            written = write_stub("github", dest, force=args.force)
+            print(f"wrote {written}")
+        except FileExistsError:
+            print(f"skip  {dest} (exists — pass --force to overwrite)")
+
     if args.guided:
         _guided_draft(contracts)
 
@@ -753,9 +912,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     print(f"  Yours: Edit {first if first.exists() else contracts}")
     print(f"         vantage-core suite validate {suite}")
     print(f"         export OPENROUTER_API_KEY=sk-or-...   # BYOK")
-    print(
-        f"         vantage-core suite run {suite} --json > decisions/suite.json"
-    )
+    print(f"         vantage-core suite run {suite} --json --save decisions/")
+    print("  CI:    vantage-core ci stub github   # still-trust required check")
     if not written and not args.force:
         print("No new contract files written. Edit existing or use --force.")
     return 0
@@ -936,6 +1094,40 @@ def cmd_yamls(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ci_stub(args: argparse.Namespace) -> int:
+    from vantage_core.ci_stub import default_stub_path, write_stub
+
+    kind = str(args.kind)
+    dest = Path(args.out) if args.out else default_stub_path(kind)
+    try:
+        path = write_stub(kind, dest, force=bool(args.force))
+    except FileExistsError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(f"wrote {path}")
+    if kind == "github":
+        print("Next: mark this job as a required check · secret OPENROUTER_API_KEY")
+    else:
+        print("Next: include from .gitlab-ci.yml · CI/CD variable OPENROUTER_API_KEY")
+    return 0
+
+
+def _add_ci_comment_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--ci-comment",
+        action="store_true",
+        help="Post bind + compare_to_baseline on the GitHub PR / GitLab MR (token from CI env)",
+    )
+    parser.add_argument(
+        "--ci-comment-file",
+        metavar="PATH",
+        help="Write the same markdown to PATH (no network)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="vantage-core",
@@ -1008,20 +1200,29 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DIR",
         help="Write dated decision JSON under DIR (free ledger; e.g. decisions/)",
     )
+    _add_ci_comment_flags(suite_run)
     suite_run.set_defaults(func=cmd_suite_run)
 
     suite_rerun = suite_sub.add_parser(
         "rerun",
         help=(
             "Re-run suite for still-trust (new decision); "
-            "optional --baseline prior decision.json for compare_to_baseline"
+            "optional --baseline prior decision.json | latest | DIR"
         ),
     )
     suite_rerun.add_argument("suite", help="Path to suite.yaml")
     suite_rerun.add_argument(
         "--baseline",
-        metavar="DECISION.json",
-        help="Prior suite decision JSON to compare against (still-trust ritual)",
+        metavar="DECISION.json|latest|DIR",
+        help=(
+            "Prior suite decision to compare (still-trust). "
+            "File, directory of JSON, or 'latest' (newest in --baseline-dir / --save / decisions/)"
+        ),
+    )
+    suite_rerun.add_argument(
+        "--baseline-dir",
+        metavar="DIR",
+        help="Directory for --baseline latest (default: --save or ./decisions)",
     )
     suite_rerun.add_argument("--model", default=None, help="Override model for all paths")
     suite_rerun.add_argument("--turns", type=int, default=None)
@@ -1046,11 +1247,22 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DIR",
         help="Write dated decision JSON under DIR (e.g. decisions/)",
     )
+    _add_ci_comment_flags(suite_rerun)
     suite_rerun.set_defaults(func=cmd_suite_rerun)
 
     demo_p = sub.add_parser(
         "demo",
-        help="Run bundled Acme sample suite (3 paths) — live demo, no init required",
+        help="60s talk track (no key) or live Acme sample suite (--live)",
+    )
+    demo_p.add_argument(
+        "--offline",
+        action="store_true",
+        help="Saved before/after + PR comment (no API key) — default when no key is set",
+    )
+    demo_p.add_argument(
+        "--live",
+        action="store_true",
+        help="Run the bundled Acme sample suite (needs OPENROUTER_API_KEY)",
     )
     demo_p.add_argument("--model", default=None)
     demo_p.add_argument("--fail-under", type=float, default=None)
@@ -1108,6 +1320,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory (default: ./decisions)",
     )
     dec_list.set_defaults(func=cmd_decisions_list)
+    dec_latest = dec_sub.add_parser(
+        "latest",
+        help="Print path of the newest decision JSON (for --baseline latest / scripts)",
+    )
+    dec_latest.add_argument(
+        "dir",
+        nargs="?",
+        default="decisions",
+        help="Directory (default: ./decisions)",
+    )
+    dec_latest.set_defaults(func=cmd_decisions_latest)
     dec_show = dec_sub.add_parser("show", help="Pretty-print a decision JSON for demos")
     dec_show.add_argument("path", help="Path to decision JSON")
     dec_show.add_argument("--json", action="store_true", help="Re-emit raw JSON")
@@ -1189,7 +1412,38 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Interactive prompts → draft one additional contract YAML",
     )
+    init_p.add_argument(
+        "--ci",
+        action="store_true",
+        help="Also write .github/workflows/vantage-core-suite-gate.yml (still-trust required check)",
+    )
     init_p.set_defaults(func=cmd_init)
+
+    ci_p = sub.add_parser(
+        "ci",
+        help="Write still-trust CI stubs (GitHub Actions / GitLab CI)",
+    )
+    ci_sub = ci_p.add_subparsers(dest="ci_command", required=True)
+    ci_stub = ci_sub.add_parser(
+        "stub",
+        help="Write GitHub Actions or GitLab CI workflow (required-check still-trust gate)",
+    )
+    ci_stub.add_argument(
+        "kind",
+        choices=["github", "gitlab"],
+        help="github → Actions workflow; gitlab → include-able .gitlab-ci.vantage-core.yml",
+    )
+    ci_stub.add_argument(
+        "--out",
+        default=None,
+        help="Destination path (defaults: .github/workflows/vantage-core-suite-gate.yml or .gitlab-ci.vantage-core.yml)",
+    )
+    ci_stub.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite if the destination exists",
+    )
+    ci_stub.set_defaults(func=cmd_ci_stub)
 
     val_p = sub.add_parser(
         "validate",

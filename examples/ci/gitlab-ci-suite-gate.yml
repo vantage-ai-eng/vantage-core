@@ -1,0 +1,52 @@
+# vantage-core still-trust suite gate (0.1.7+)
+# Include from .gitlab-ci.yml:
+#   include:
+#     - local: .gitlab-ci.vantage-core.yml
+# Or copy into .gitlab-ci.yml if you have no other jobs.
+#
+# CI/CD variable: OPENROUTER_API_KEY (masked)
+# MR: re-decide vs last default-branch artifact when GitLab can fetch it.
+# Bind: CI_COMMIT_SHA → decision.bind (source gitlab_ci)
+# Comment: bind + compare_to_baseline via CI_JOB_TOKEN / GITLAB_TOKEN
+
+stages:
+  - gate
+
+suite-gate:
+  image: python:3.12-slim
+  stage: gate
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  variables:
+    PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  needs:
+    - project: $CI_PROJECT_PATH
+      job: suite-gate
+      ref: $CI_DEFAULT_BRANCH
+      artifacts: true
+      optional: true
+  before_script:
+    - pip install -q -U 'vantage-core>=0.1.7'
+    - vantage-core suite validate suites/starter.suite.yaml
+  script:
+    - mkdir -p baseline decisions
+    - |
+      if [ -f decisions/suite.json ]; then
+        mv decisions/suite.json baseline/suite.json
+      fi
+    - |
+      set -euo pipefail
+      if [ -n "${CI_MERGE_REQUEST_IID:-}" ] && [ -f baseline/suite.json ]; then
+        vantage-core suite rerun suites/starter.suite.yaml \
+          --baseline baseline/suite.json \
+          --json --save decisions/ --ci-comment | tee decisions/suite.json
+      else
+        vantage-core suite run suites/starter.suite.yaml \
+          --json --save decisions/ --ci-comment | tee decisions/suite.json
+      fi
+  artifacts:
+    when: always
+    paths:
+      - decisions/suite.json
+    expire_in: 30 days

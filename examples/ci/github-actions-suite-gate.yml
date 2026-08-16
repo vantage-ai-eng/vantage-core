@@ -1,14 +1,22 @@
-# Example GitHub Actions required check — suite + SHA bind.
-# Mark this job as a required status check on the protected branch.
+# Still-trust suite gate — mark as a required check on the protected branch.
+# PR: re-decide vs last successful default-branch decision artifact.
+# Default branch: record a new ship decision.
+# Bind: GITHUB_SHA / PR → decision.bind
+# Comment: bind headline + compare_to_baseline (pull-requests: write)
 #
-# Bind: GITHUB_SHA / GITHUB_REF / pull_request context are picked up
-# automatically by vantage-core and stamped onto decision.bind.
+# Requires vantage-core 0.1.7+  ·  secret: OPENROUTER_API_KEY
+# First PR after a green default-branch run is when --baseline appears.
 name: vantage-core suite gate
 
 on:
   pull_request:
   push:
     branches: [main, master]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
 
 jobs:
   suite-gate:
@@ -21,20 +29,44 @@ jobs:
           python-version: "3.12"
 
       - name: Install vantage-core
-        run: pip install vantage-core
+        run: pip install -U 'vantage-core>=0.1.7'
 
       - name: Validate suite
         run: vantage-core suite validate suites/starter.suite.yaml
 
-      - name: Run suite (blocks PR on fail)
+      - name: Restore last ship decision
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p baseline
+          DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
+          RID=$(gh run list --repo "$GITHUB_REPOSITORY" \
+            --branch "$DEFAULT_BRANCH" \
+            --workflow "${{ github.workflow }}" \
+            --status success --limit 1 \
+            --json databaseId --jq '.[0].databaseId' || true)
+          if [ -n "$RID" ] && [ "$RID" != "null" ]; then
+            gh run download "$RID" --name runtimeai-decision --dir baseline || true
+          fi
+          if [ -f baseline/decisions/suite.json ] && [ ! -f baseline/suite.json ]; then
+            mv baseline/decisions/suite.json baseline/suite.json
+          fi
+
+      - name: Re-decide vs last ship (PR) or record ship (default branch)
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
+          set -euo pipefail
           mkdir -p decisions
-          vantage-core suite run suites/starter.suite.yaml --json > decisions/suite.json
-          echo "exit=$?"
-          # Human one-liner from bind (when SHA known):
-          python -c "import json; d=json.load(open('decisions/suite.json')); print(d.get('bind',{}).get('headline') or 'no bind')"
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ -f baseline/suite.json ]; then
+            vantage-core suite rerun suites/starter.suite.yaml \
+              --baseline baseline/suite.json \
+              --json --save decisions/ --ci-comment | tee decisions/suite.json
+          else
+            vantage-core suite run suites/starter.suite.yaml \
+              --json --save decisions/ --ci-comment | tee decisions/suite.json
+          fi
 
       - name: Upload decision artifact
         if: always()
@@ -42,3 +74,4 @@ jobs:
         with:
           name: runtimeai-decision
           path: decisions/suite.json
+          if-no-files-found: ignore

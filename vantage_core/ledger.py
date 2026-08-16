@@ -57,6 +57,73 @@ def list_decisions(directory: str | Path) -> list[Path]:
     return files
 
 
+_LATEST_TOKENS = frozenset({"latest", "auto"})
+
+
+def latest_decision_path(directory: str | Path) -> Path | None:
+    """Newest runtimeai.decision/v1 JSON in directory (generated_at, then mtime)."""
+    d = Path(directory).expanduser()
+    if not d.is_dir():
+        return None
+    ranked: list[tuple[str, float, str, Path]] = []
+    for path in d.glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if str(data.get("schema") or "") != "runtimeai.decision/v1":
+            continue
+        when = str(data.get("generated_at") or "")
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        ranked.append((when, mtime, path.name, path))
+    if not ranked:
+        return None
+    ranked.sort()
+    return ranked[-1][3]
+
+
+def resolve_baseline_spec(
+    spec: str | None,
+    *,
+    baseline_dir: str | None = None,
+    save_dir: str | None = None,
+) -> Path | None:
+    """Resolve --baseline: a file, a directory (newest JSON), or ``latest`` / ``auto``.
+
+    ``latest`` looks in ``baseline_dir``, else ``save_dir``, else ``./decisions``.
+    """
+    if spec is None:
+        return None
+    raw = str(spec).strip()
+    if not raw:
+        return None
+    if raw.lower() in _LATEST_TOKENS:
+        directory = Path(baseline_dir or save_dir or "decisions").expanduser()
+        path = latest_decision_path(directory)
+        if path is None:
+            raise FileNotFoundError(
+                f"no decision JSON in {directory.resolve()} — "
+                "run `vantage-core suite run --save decisions/` first, "
+                "or pass a decision file to --baseline"
+            )
+        return path
+    p = Path(raw).expanduser()
+    if p.is_dir():
+        path = latest_decision_path(p)
+        if path is None:
+            raise FileNotFoundError(
+                f"no decision JSON in {p.resolve()} — "
+                "pass a decision file or a directory that contains one"
+            )
+        return path
+    return p
+
+
 def load_decision(path: str | Path) -> dict[str, Any]:
     p = Path(path).expanduser().resolve()
     data = json.loads(p.read_text(encoding="utf-8"))
