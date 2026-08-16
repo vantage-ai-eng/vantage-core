@@ -98,7 +98,24 @@ def test_format_comment_without_bind_or_compare():
     assert "solo.path" in text
 
 
-def test_ci_comment_skips_outside_ci(tmp_path):
+def test_ci_comment_skips_outside_ci(monkeypatch, tmp_path):
+    # GitHub Actions runners set GITHUB_* — clear so this asserts the non-CI path.
+    for key in (
+        "GITHUB_ACTIONS",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_REPOSITORY",
+        "GITHUB_EVENT_PATH",
+        "GITHUB_REF",
+        "GITHUB_HEAD_REF",
+        "CI",
+        "GITLAB_CI",
+        "CI_JOB_TOKEN",
+        "CI_API_V4_URL",
+        "CI_PROJECT_ID",
+        "CI_MERGE_REQUEST_IID",
+    ):
+        monkeypatch.delenv(key, raising=False)
     before = json.loads(BEFORE.read_text(encoding="utf-8"))
     dest = tmp_path / "c.md"
     result = maybe_post_ci_comment(
