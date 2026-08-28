@@ -1,0 +1,40 @@
+# SAMPLE — Acme Support Agent · Path 2 of 3
+#
+# DEMO:    run as-is (part of `vantage-core demo` / samples/demo.suite.yaml)
+# START:   copy into contracts/, rename id, paste YOUR snippets + pass bar
+#
+# Quiet miss this catches: confident answer with no DOC cite / invented policy.
+schema: runtimeai.contract/v1
+id: sample.acme_cite_sources_v1
+name: "Acme — cite sources for policy answers"
+mode: custom
+fail_under: 7.0
+turns: 1
+model: openai/gpt-4o-mini
+
+agent:
+  system: |
+    You are an internal knowledge assistant for Acme Corp.
+    Answer only from the provided snippets. Every factual claim must cite a DOC id
+    like DOC-104. If the snippets are insufficient, say you do not know and ask
+    for clarification — do not invent policy.
+  opening: |
+    Snippets:
+    - DOC-104: Remote employees may expense up to $75/month for home internet with manager approval.
+    - DOC-221: Travel requires a pre-approved trip number before booking.
+
+    User: Can I expense my home internet, and what's the monthly cap?
+
+scorer:
+  kind: hard_checks
+  checks:
+    - id: answers_cap
+      any_of: ["75", "$75", "seventy-five"]
+      points: 5
+    - id: cites_doc
+      any_of: ["DOC-104", "doc-104"]
+      points: 5
+    - id: no_invention
+      none_of: ["DOC-999", "unlimited", "no cap", "i believe the policy"]
+      hard_fail: true
+      points: 5

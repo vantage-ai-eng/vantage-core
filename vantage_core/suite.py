@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import uuid
@@ -147,6 +148,65 @@ def load_suite(path: str | Path) -> ResolvedSuite:
     if not p.is_file():
         raise FileNotFoundError(f"suite not found: {p}")
     return resolve_suite(_load_raw(p), source_path=p)
+
+
+def _path_bar_sort_key(entry: dict[str, str]) -> tuple[str, str]:
+    """Total order for suite paths: id, then content_sha256 (duplicate ids)."""
+    return (entry["id"], entry["content_sha256"])
+
+
+def canonical_suite_definition(suite: ResolvedSuite) -> dict[str, Any]:
+    """Canonical object hashed by ``suite_content_sha256``.
+
+    Included (and only these): suite ``id``, ``fail_policy``, ``min_passed``,
+    ``cost_ceiling_usd``, suite ``fail_under`` (path-bar override; ``null`` if
+    unset), and each path as ``{id, content_sha256}`` **sorted by**
+    ``(id, content_sha256)``. Authored order is not part of the definition.
+
+    ``paths[].content_sha256`` is ``ResolvedContract.contract_bar_sha256()`` —
+    task/prompt + rubric + ``fail_under`` — not ``content_sha256()`` (the
+    per-scenario pin, which omits ``fail_under``).
+
+    Excluded: suite ``name``, ``model``, ``source_path``, run results, scores,
+    USD, bind, CLI ``reps`` / ``pass_k`` / ``turns`` / timeout. Adding or
+    removing a path changes the hash; reordering the same paths does not.
+    Editing a path's bar (prompt, rubric, or ``fail_under``), ``fail_policy``,
+    ``min_passed``, ``cost_ceiling_usd``, suite ``fail_under``, or suite ``id``
+    does too. Suites are allowed to change — the hash is visibility, not a freeze.
+    """
+    from vantage_core.contract import load_contract
+
+    paths: list[dict[str, str]] = []
+    for entry in suite.paths:
+        contract = load_contract(suite.resolve_path(entry))
+        cid = str(entry.id or contract.id).strip()
+        paths.append({"id": cid, "content_sha256": contract.contract_bar_sha256()})
+    paths.sort(key=_path_bar_sort_key)
+    return {
+        "id": suite.id,
+        "fail_policy": suite.fail_policy,
+        "min_passed": suite.min_passed,
+        "cost_ceiling_usd": suite.cost_ceiling_usd,
+        "fail_under": suite.fail_under,
+        "paths": paths,
+    }
+
+
+def hash_suite_definition_payload(payload: dict[str, Any]) -> str:
+    """SHA-256 hex of a canonical suite-definition object.
+
+    Same dumps as ``payload_sha256``: ``json.dumps(..., sort_keys=True,
+    separators=(",", ":"), ensure_ascii=False)``, UTF-8, SHA-256 hex. Floats and
+    ``None`` follow CPython ``json.dumps`` (``None`` → ``null``).
+    """
+    from vantage_core.decision import _canonical_json
+
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def suite_content_sha256(suite: ResolvedSuite) -> str:
+    """SHA-256 hex of the suite definition (bar), ``runtimeai-py-json-v1`` dumps."""
+    return hash_suite_definition_payload(canonical_suite_definition(suite))
 
 
 def validate_suite_files(suite: ResolvedSuite) -> list[str]:
@@ -423,6 +483,7 @@ def run_suite(
     baseline_path: str | Path | None = None,
     reps: int = 1,
     pass_k: int | None = None,
+    trigger: str | None = None,
 ) -> dict[str, Any]:
     """Run every path and return a suite-level runtimeai.decision/v1.
 
@@ -447,12 +508,12 @@ def run_suite(
             baseline=baseline,
             baseline_path=baseline_path,
         )
-        from vantage_core.decision import apply_route_and_exit
+        from vantage_core.decision import apply_route_and_exit, apply_trigger
 
-        return apply_route_and_exit(decision)
+        return apply_route_and_exit(apply_trigger(decision, trigger or "change"))
 
     # Multi-rep: run full suite N times; aggregate k-of-n
-    from vantage_core.decision import apply_route_and_exit, payload_sha256
+    from vantage_core.decision import apply_route_and_exit, apply_trigger, payload_sha256
 
     rep_summaries: list[dict[str, Any]] = []
     scores: list[float] = []
@@ -548,7 +609,7 @@ def run_suite(
         decision = attach_baseline_compare(
             decision, baseline, baseline_path=baseline_path
         )
-    decision = apply_route_and_exit(decision)
+    decision = apply_route_and_exit(apply_trigger(decision, trigger or "change"))
     return decision
 
 
@@ -569,6 +630,7 @@ def _run_suite_once(
     from vantage_core import __version__
     from vantage_core.bind import resolve_bind
     from vantage_core.contract import load_contract
+    from vantage_core.cost import model_costs_sha256
     from vantage_core.decision import build_decision_object
     from vantage_core.runner import run_checkride
 
@@ -576,6 +638,10 @@ def _run_suite_once(
     session_id = str(uuid.uuid4())
     resolved_model = (model or suite.model or "openai/gpt-4o-mini").strip()
     bar = fail_under if fail_under is not None else suite.fail_under
+    try:
+        suite_sha: str | None = suite_content_sha256(suite)
+    except (OSError, ValueError, RuntimeError):
+        suite_sha = None
 
     path_results: list[dict[str, Any]] = []
     nested: list[dict[str, Any]] = []
@@ -598,25 +664,33 @@ def _run_suite_once(
         except Exception as exc:
             err = str(exc)
             errors.append(f"{contract_path.name}: {err}")
-            path_results.append(
-                {
-                    "path": str(contract_path),
-                    "contract_id": entry.id,
+            bar_sha = None
+            try:
+                failed_contract = load_contract(contract_path)
+                bar_sha = failed_contract.contract_bar_sha256()
+            except Exception:
+                bar_sha = None
+            row = {
+                "path": str(contract_path),
+                "contract_id": entry.id,
+                "passed": False,
+                "out_of_10": None,
+                "est_usd": None,
+                "exit_code": 1,
+                "error": err,
+                "pass_gate": {
                     "passed": False,
-                    "out_of_10": None,
-                    "est_usd": None,
-                    "exit_code": 1,
-                    "error": err,
-                    "pass_gate": {
-                        "passed": False,
-                        "blockers": ["run_error"],
-                        "headline": err,
-                    },
-                }
-            )
+                    "blockers": ["run_error"],
+                    "headline": err,
+                },
+            }
+            if bar_sha:
+                row["content_sha256"] = bar_sha
+            path_results.append(row)
             continue
 
         cid = entry.id or str(decision.get("scenario_id") or contract.id)
+        bar_sha = contract.contract_bar_sha256()
         summary = {
             "path": str(contract_path),
             "contract_id": cid,
@@ -628,9 +702,9 @@ def _run_suite_once(
             "status": decision.get("status"),
             "pass_gate": decision.get("pass_gate"),
             "error": decision.get("error"),
+            "content_sha256": bar_sha,
         }
         path_results.append(summary)
-        # Compact nested decision (full object; integrity already set)
         nested.append(decision)
 
     costs = [
@@ -680,7 +754,8 @@ def _run_suite_once(
             "suite_schema": SUITE_SCHEMA,
             "suite_id": suite.id,
             "fail_policy": suite.fail_policy,
-            "model_costs_sha256": None,
+            "suite_sha256": suite_sha,
+            "model_costs_sha256": model_costs_sha256(),
             "git_sha": (bind_block or {}).get("git_sha"),
         },
         elapsed_s=round(time.monotonic() - t0, 1),
@@ -695,6 +770,8 @@ def _run_suite_once(
         "fail_policy": suite.fail_policy,
         "min_passed": suite.min_passed,
         "cost_ceiling_usd": suite.cost_ceiling_usd,
+        "fail_under": suite.fail_under,
+        "suite_sha256": suite_sha,
         "source_path": str(suite.source_path) if suite.source_path else None,
         "paths": path_results,
         "path_count": len(path_results),

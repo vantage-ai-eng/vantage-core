@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from importlib import resources
 from pathlib import Path
@@ -40,6 +41,18 @@ def _load_rates() -> dict[str, dict[str, float]]:
                 continue
     _RATES = out
     return out
+
+
+def model_costs_sha256() -> str | None:
+    """SHA-256 of the rate table this runner actually used (provenance pin)."""
+    try:
+        raw = (resources.files("vantage_core") / "data" / "model_rates_slim.json").read_bytes()
+    except Exception:
+        path = Path(__file__).resolve().parent / "data" / "model_rates_slim.json"
+        if not path.is_file():
+            return None
+        raw = path.read_bytes()
+    return hashlib.sha256(raw).hexdigest()
 
 
 def _lookup(model: str) -> dict[str, float] | None:

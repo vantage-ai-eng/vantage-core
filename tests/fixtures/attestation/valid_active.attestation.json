@@ -1,0 +1,17 @@
+{
+  "schema": "runtimeai.attestation/v1",
+  "canonicalization": "runtimeai-py-json-v1",
+  "algorithm": "sha256",
+  "digest": "a5dcb8545fc02c295dc3c888689a60ff31db3cd38d5d9f47a34e47c3fcdd6898",
+  "kid": "test-active-1",
+  "signed_at": "2026-08-01T15:00:00Z",
+  "pins": {
+    "model": "openai/gpt-4o-mini",
+    "scenario_id": "sample.acme_release_v1",
+    "runner": "vantage-core",
+    "runner_version": "0.1.4",
+    "suite_id": "sample.acme_release_v1"
+  },
+  "client_ts": "2026-08-01T15:00:00Z",
+  "signature_b64": "BXB+MG1I8YYuA02hZvXShYtmF7capRLNj9zwZV2+y/VTboyvWlo0sBHU6s6KsiovEBWcTcy5fYIm0321STlBCw=="
+}

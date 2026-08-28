@@ -9,8 +9,13 @@ from typing import Any, Callable
 
 from vantage_core import __version__
 from vantage_core.contract import ResolvedContract
-from vantage_core.cost import estimate_run_cost_usd
-from vantage_core.decision import build_decision_object, build_pass_gate_numeric
+from vantage_core.cost import estimate_run_cost_usd, model_costs_sha256
+from vantage_core.decision import (
+    apply_route_and_exit,
+    apply_trigger,
+    build_decision_object,
+    build_pass_gate_numeric,
+)
 from vantage_core.llm_openrouter import llm_complete_with_timeout, openrouter_api_key
 from vantage_core.run_store import RunStore
 from vantage_core.scorers import score_run
@@ -44,6 +49,7 @@ def run_checkride(
     runner_version: str | None = None,
     llm: Callable[..., str] | None = None,
     bind: dict[str, Any] | None = None,
+    trigger: str | None = None,
     attach_bind: bool = True,
 ) -> dict[str, Any]:
     """Run a resolved contract and return a runtimeai.decision/v1 object.
@@ -125,7 +131,7 @@ def run_checkride(
     else:
         bind_block = None
 
-    return build_decision_object(
+    decision = build_decision_object(
         session_id=session_id,
         scenario_id=contract.id,
         model=resolved_model,
@@ -143,10 +149,16 @@ def run_checkride(
             "rubric_id": contract.scorer_kind,
             "contract_schema": contract.schema,
             "contract_mode": contract.mode,
-            "model_costs_sha256": None,
+            "bar_sha256": contract.contract_bar_sha256(),
+            "model_costs_sha256": model_costs_sha256(),
             "git_sha": (bind_block or {}).get("git_sha"),
         },
         elapsed_s=round(time.monotonic() - t0, 1),
         error=run.get("error"),
         bind=bind_block,
     )
+    nested_contract = decision.get("contract") if isinstance(decision.get("contract"), dict) else {}
+    nested_contract = dict(nested_contract)
+    nested_contract["bar_sha256"] = contract.contract_bar_sha256()
+    decision["contract"] = nested_contract
+    return apply_route_and_exit(apply_trigger(decision, trigger or "change"))

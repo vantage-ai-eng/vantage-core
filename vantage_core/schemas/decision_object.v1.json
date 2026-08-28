@@ -44,7 +44,8 @@
           "properties": {
             "rubric_id": { "type": ["string", "null"] },
             "model_costs_sha256": { "type": ["string", "null"] },
-            "git_sha": { "type": ["string", "null"] }
+            "git_sha": { "type": ["string", "null"] },
+            "suite_sha256": { "type": ["string", "null"] }
           }
         }
       }
@@ -114,9 +115,22 @@
         "headline": { "type": "string" }
       }
     },
+    "trigger": {
+      "type": "object",
+      "description": "Why this decision fired. change=PR/push; cadence=scheduled re-decide; catalog=ID add/retire accelerant (not silent-drift observation).",
+      "properties": {
+        "kind": { "type": "string", "enum": ["change", "cadence", "catalog"] }
+      }
+    },
     "suite": {
       "type": "object",
-      "description": "Present on suite-level decisions (runtimeai.suite/v1 aggregate)."
+      "description": "Present on suite-level decisions (runtimeai.suite/v1 aggregate).",
+      "properties": {
+        "suite_sha256": {
+          "type": ["string", "null"],
+          "description": "Canonical hash of the suite definition (bar). Required on new suite records; null/absent on single-scenario."
+        }
+      }
     },
     "out_of_10": { "type": ["number", "null"] },
     "total_25": { "type": ["integer", "null"] },

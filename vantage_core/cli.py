@@ -168,6 +168,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             turns=args.turns,
             timeout_s=args.timeout,
             runner_version=__version__,
+            trigger=getattr(args, "trigger", None) or "change",
         )
     except Exception as exc:
         print(f"vantage-core run failed: {exc}", file=sys.stderr)
@@ -227,6 +228,7 @@ def cmd_suite_run(args: argparse.Namespace) -> int:
             runner_version=__version__,
             reps=int(getattr(args, "reps", 1) or 1),
             pass_k=int(args.pass_k) if getattr(args, "pass_k", None) is not None else None,
+            trigger=getattr(args, "trigger", None),
         )
     except Exception as exc:
         print(f"vantage-core suite run failed: {exc}", file=sys.stderr)
@@ -290,6 +292,7 @@ def cmd_suite_rerun(args: argparse.Namespace) -> int:
             baseline_path=baseline_path,
             reps=int(getattr(args, "reps", 1) or 1),
             pass_k=int(args.pass_k) if getattr(args, "pass_k", None) is not None else None,
+            trigger=getattr(args, "trigger", None),
         )
     except Exception as exc:
         print(f"vantage-core suite rerun failed: {exc}", file=sys.stderr)
@@ -361,13 +364,16 @@ def cmd_schema(_args: argparse.Namespace) -> int:
     print(f"schema  {_SCHEMA}")
     print(f"contract_schema  runtimeai.contract/v1")
     print(f"suite_schema  runtimeai.suite/v1")
+    print(f"attestation_schema  runtimeai.attestation/v1")
+    print(f"canonicalization  runtimeai-py-json-v1")
     print(f"version  {__version__}")
     if schema_path.is_file():
         print(f"json_schema  {schema_path}")
     print(
         "fields  contract + scorecard.pass_gate + usd.est_eval + exit + "
         "integrity.payload_sha256 + bind (when SHA known) + suite (suite run) + "
-        "compare_to_baseline (suite rerun --baseline latest) + --ci-comment (PR/MR)"
+        "compare_to_baseline (suite rerun --baseline latest) + --ci-comment (PR/MR) + "
+        "report --html/--pdf (offline human memo)"
     )
     from vantage_core.library import list_library_ids
 
@@ -380,7 +386,10 @@ def cmd_schema(_args: argparse.Namespace) -> int:
         print(f"samples   {samples}")
         print("hint      vantage-core demo --save decisions/")
         print("hint      vantage-core decisions show decisions/<file>.json")
+        print("hint      vantage-core report decisions/<file>.json --html decisions/suite.html")
         print("hint      vantage-core init   # samples/ + contracts/ + suites/")
+        print("hint      vantage-core verify RECORD.json ATTESTATION.json  # offline")
+        print("hint      vantage-core attest RECORD.json  # needs RUNTIMEAI_API_KEY")
     return 0
 
 
@@ -556,6 +565,7 @@ def cmd_demo_offline(args: argparse.Namespace) -> int:
     after_view = dict(after)
     after_view["compare_to_baseline"] = cmp
     comment = format_comment(after_view)
+    _maybe_save_offline_demo(before, after, before_p, getattr(args, "save", None))
 
     if args.json:
         print(
@@ -602,8 +612,37 @@ def cmd_demo_offline(args: argparse.Namespace) -> int:
     print("Live sample (a few cents, needs a key):")
     print("  export OPENROUTER_API_KEY=sk-or-...")
     print("  vantage-core demo --live")
+    print()
+    print("Human memo (offline, no account):")
+    print("  vantage-core demo --save decisions/")
+    print("  vantage-core report \"$(vantage-core decisions latest)\" --html decisions/suite.html")
     print("=" * 64)
     return 0
+
+
+def _maybe_save_offline_demo(
+    before: dict,
+    after: dict,
+    before_p: Path,
+    save_dir: str | None,
+) -> None:
+    """Honor --save on the no-key talk track (testers' first command)."""
+    if not save_dir:
+        return
+    from vantage_core.ledger import save_decision
+    from vantage_core.suite import attach_baseline_compare
+
+    after_saved = dict(after)
+    attach_baseline_compare(after_saved, before, baseline_path=before_p)
+    p1 = save_decision(before, save_dir)
+    p2 = save_decision(after_saved, save_dir)
+    print(f"saved  {p1}", file=sys.stderr)
+    print(f"saved  {p2}", file=sys.stderr)
+    dest_html = Path(save_dir).expanduser() / "suite.html"
+    print(
+        f"next   vantage-core report {p2} --html {dest_html}",
+        file=sys.stderr,
+    )
 
 
 def cmd_demo(args: argparse.Namespace) -> int:
@@ -749,6 +788,7 @@ def _write_project_readme(root: Path, *, force: bool) -> None:
         vantage-core suite run suites/starter.suite.yaml --json --save decisions/
         echo $?   # 0 iff suite pass_gate.passed
         vantage-core decisions list
+        vantage-core report decisions/<latest>.json --html decisions/suite.html
         ```
 
         - `samples/` — known-good demo pack (run as-is)
@@ -914,6 +954,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     print(f"         export OPENROUTER_API_KEY=sk-or-...   # BYOK")
     print(f"         vantage-core suite run {suite} --json --save decisions/")
     print("  CI:    vantage-core ci stub github   # still-trust required check")
+    print("         vantage-core report \"$(vantage-core decisions latest)\" --html decisions/suite.html")
     if not written and not args.force:
         print("No new contract files written. Edit existing or use --force.")
     return 0
@@ -1094,6 +1135,55 @@ def cmd_yamls(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_report(args: argparse.Namespace) -> int:
+    """Render a self-contained HTML/PDF scorecard from decision JSON (offline)."""
+    from vantage_core.decision import validate_decision_object
+    from vantage_core.ledger import load_decision
+    from vantage_core.report import decision_to_html, decision_to_pdf_bytes
+
+    html_out = getattr(args, "html", None)
+    pdf_out = getattr(args, "pdf", None)
+    if not html_out and not pdf_out:
+        print("report requires --html PATH and/or --pdf PATH", file=sys.stderr)
+        return 2
+
+    path = Path(args.path)
+    try:
+        decision = load_decision(path)
+    except FileNotFoundError:
+        print(f"failed to read decision: {path} not found", file=sys.stderr)
+        return 2
+    except Exception as exc:
+        print(f"failed to read decision: {exc}", file=sys.stderr)
+        return 2
+
+    errors = validate_decision_object(decision)
+    if errors and not args.force:
+        print(
+            f"INVALID decision ({len(errors)} error(s)) — pass --force to render anyway",
+            file=sys.stderr,
+        )
+        for err in errors[:8]:
+            print(f"  - {err}", file=sys.stderr)
+        return 1
+
+    try:
+        if html_out:
+            dest = Path(html_out).expanduser()
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(decision_to_html(decision), encoding="utf-8")
+            print(f"html  {dest}", file=sys.stderr)
+        if pdf_out:
+            dest = Path(pdf_out).expanduser()
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(decision_to_pdf_bytes(decision))
+            print(f"pdf  {dest}", file=sys.stderr)
+    except Exception as exc:
+        print(f"vantage-core report failed: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_ci_stub(args: argparse.Namespace) -> int:
     from vantage_core.ci_stub import default_stub_path, write_stub
 
@@ -1112,6 +1202,88 @@ def cmd_ci_stub(args: argparse.Namespace) -> int:
         print("Next: mark this job as a required check · secret OPENROUTER_API_KEY")
     else:
         print("Next: include from .gitlab-ci.yml · CI/CD variable OPENROUTER_API_KEY")
+    return 0
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    """Offline verify of a detached attestation against a local decision record."""
+    from vantage_core.attestation import (
+        CANONICAL_KEYRING_URL,
+        attestation_sibling_path,
+        load_keyring,
+        verify_attestation,
+    )
+    from vantage_core.ledger import load_decision
+
+    record_path = Path(args.record)
+    att_raw = getattr(args, "attestation", None)
+    att_path = Path(att_raw) if att_raw else attestation_sibling_path(record_path)
+    try:
+        decision = load_decision(record_path)
+    except Exception as exc:
+        print(f"failed to read decision: {exc}", file=sys.stderr)
+        return 2
+    try:
+        envelope = json.loads(att_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"failed to read attestation: {att_path}: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(envelope, dict):
+        print("attestation is not a JSON object", file=sys.stderr)
+        return 2
+
+    keyring_src = getattr(args, "keyring", None)
+    try:
+        keyring = load_keyring(keyring_src) if keyring_src else load_keyring()
+    except Exception as exc:
+        print(f"failed to load keyring: {exc}", file=sys.stderr)
+        return 2
+
+    result = verify_attestation(decision, envelope, keyring=keyring)
+    if not result.ok:
+        print(f"FAIL  {result.error}", file=sys.stderr)
+        if result.kid:
+            print(f"kid   {result.kid}", file=sys.stderr)
+        print(f"hint  in-package keyring is the offline fallback; newer kids: --keyring {CANONICAL_KEYRING_URL}", file=sys.stderr)
+        return 1
+    print(f"ok  kid={result.kid}  signed_at={result.signed_at}  digest={result.digest}")
+    for warning in result.warnings:
+        print(f"warning  {warning}")
+    return 0
+
+
+def cmd_attest(args: argparse.Namespace) -> int:
+    """Paid: POST digest+pins; write detached sibling. Does not sign locally."""
+    from vantage_core.attest_client import IssuanceNotLive, issue_attestation
+    from vantage_core.attestation import attestation_sibling_path
+    from vantage_core.decision import validate_decision_object
+    from vantage_core.ledger import load_decision
+
+    record_path = Path(args.record)
+    try:
+        decision = load_decision(record_path)
+    except Exception as exc:
+        print(f"failed to read decision: {exc}", file=sys.stderr)
+        return 2
+    errors = validate_decision_object(decision)
+    if errors:
+        print(f"INVALID decision ({len(errors)} error(s))", file=sys.stderr)
+        for err in errors[:8]:
+            print(f"  - {err}", file=sys.stderr)
+        return 1
+    dest = Path(args.out) if getattr(args, "out", None) else attestation_sibling_path(record_path)
+    try:
+        envelope = issue_attestation(decision)
+    except IssuanceNotLive as exc:
+        print(str(exc), file=sys.stderr)
+        print("  vantage-core verify RECORD [RECORD.attestation.json]", file=sys.stderr)
+        return 2
+    except Exception as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
+    print(f"wrote  {dest}")
     return 0
 
 
@@ -1163,6 +1335,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Force monorepo server path (dev parity; needs Vantage clone)",
     )
+    run_p.add_argument(
+        "--trigger",
+        choices=["change", "cadence", "catalog"],
+        default="change",
+        help="Why this decision fired (default change=PR/push; cadence=schedule; catalog=ID add/retire accelerant)",
+    )
     run_p.set_defaults(func=cmd_run)
 
     suite_p = sub.add_parser("suite", help="Validate or run a runtimeai.suite/v1 multi-path suite")
@@ -1201,6 +1379,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write dated decision JSON under DIR (free ledger; e.g. decisions/)",
     )
     _add_ci_comment_flags(suite_run)
+    suite_run.add_argument(
+        "--trigger",
+        choices=["change", "cadence", "catalog"],
+        default="change",
+        help="Why this decision fired (default change=PR/push; cadence=schedule; catalog=ID add/retire accelerant)",
+    )
     suite_run.set_defaults(func=cmd_suite_run)
 
     suite_rerun = suite_sub.add_parser(
@@ -1248,6 +1432,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write dated decision JSON under DIR (e.g. decisions/)",
     )
     _add_ci_comment_flags(suite_rerun)
+    suite_rerun.add_argument(
+        "--trigger",
+        choices=["change", "cadence", "catalog"],
+        default="change",
+        help="Why this decision fired (default change=PR/push; cadence=schedule; catalog=ID add/retire accelerant)",
+    )
     suite_rerun.set_defaults(func=cmd_suite_rerun)
 
     demo_p = sub.add_parser(
@@ -1445,12 +1635,66 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ci_stub.set_defaults(func=cmd_ci_stub)
 
+    report_p = sub.add_parser(
+        "report",
+        help="Render a human HTML/PDF scorecard from decision JSON (offline; CI artifact)",
+    )
+    report_p.add_argument("path", help="Path to runtimeai.decision/v1 JSON")
+    report_p.add_argument(
+        "--html",
+        metavar="PATH",
+        help="Write a self-contained HTML memo (no network, no Cloud account)",
+    )
+    report_p.add_argument(
+        "--pdf",
+        metavar="PATH",
+        help="Write a printable PDF memo (no extra deps; optional)",
+    )
+    report_p.add_argument(
+        "--force",
+        action="store_true",
+        help="Render even if integrity/schema validation fails",
+    )
+    report_p.set_defaults(func=cmd_report)
+
     val_p = sub.add_parser(
         "validate",
         help="Validate a decision JSON, contract YAML/JSON, or suite YAML",
     )
     val_p.add_argument("path", help="Path to decision, contract, or suite file")
     val_p.set_defaults(func=cmd_validate)
+
+    verify_p = sub.add_parser(
+        "verify",
+        help="Verify a detached attestation against a local decision (offline; no account)",
+    )
+    verify_p.add_argument("record", help="Path to runtimeai.decision/v1 JSON")
+    verify_p.add_argument(
+        "attestation",
+        nargs="?",
+        default=None,
+        help="Path to runtimeai.attestation/v1 JSON (default: RECORD.attestation.json)",
+    )
+    verify_p.add_argument(
+        "--keyring",
+        metavar="PATH|URL",
+        default=None,
+        help="Override in-package keyring (https URL or file). Default: no network.",
+    )
+    verify_p.set_defaults(func=cmd_verify)
+
+    attest_p = sub.add_parser(
+        "attest",
+        help="Issue a Vantage countersignature (requires RUNTIMEAI_API_KEY; verify stays offline)",
+    )
+    attest_p.add_argument("record", help="Path to runtimeai.decision/v1 JSON")
+    attest_p.add_argument(
+        "--out",
+        metavar="PATH",
+        default=None,
+        help="Write envelope here (default: RECORD.attestation.json)",
+    )
+    attest_p.set_defaults(func=cmd_attest)
     return p
 
 

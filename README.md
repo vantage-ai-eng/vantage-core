@@ -1,16 +1,17 @@
 # vantage-core
 
-Standalone RuntimeAI check-ride CLI. Author local contracts (or a **suite** of
-3–5 paths), run against OpenRouter, get a portable **`runtimeai.decision/v1`**
+Standalone RuntimeAI still-trust CLI. Author local contracts (or a **suite** of
+3–5 critical paths), run against OpenRouter, get a portable **`runtimeai.decision/v1`**
 artifact — with optional **SHA/PR bind** — **no monorepo `server/` required**.
 
-**Seat:** the **decision engine** for ship / stay live on paths you author — not a better
-Opik / Braintrust / LangSmith experiment or trace UI. Ingest from their telemetry/exports
-(`ingest` → path plans + optional drafts); plug into CI; return clarity on the decision.
+**Seat:** the free **CI still-trust gate** for the ship decision on paths you author —
+go/no-go across functionality, cost, reliability, safety, and compliance — not a better
+Opik / Braintrust / LangSmith experiment or trace UI. Observability inspects; Vantage decides.
+Ingest from their telemetry/exports (`ingest` → path plans + optional drafts); plug into CI;
+return the verdict.
 
-**Version:** 0.1.7 — still-trust CI (`suite rerun --baseline latest`, `--ci-comment`, GitHub/GitLab
-stubs) · 0.1.6 richer `ingest` · 0.1.5 ritual (`--reps`/`--pass-k`, pass/review/block) · ledger /
-demo / suite / bind from 0.1.2–0.1.4.
+**Version:** 0.1.11 — try `demo --save` with no API key, then open the HTML memo
+(`vantage-core report … --html`) · 0.1.10 attestation · 0.1.8 CI HTML/PDF artifact · 0.1.7 still-trust CI.
 
 Partner authoring: [CI · your suite](https://www.vantageai.cc/runtimeai/method/cicd#rai-cicd-custom-fixtures)
 
@@ -30,25 +31,24 @@ Or use a venv: `python3 -m venv .venv && source .venv/bin/activate && pip instal
 
 [PyPI](https://pypi.org/project/vantage-core/) · contributors: `pip install -e ./vantage-core` from a clone.
 
-Requires `OPENROUTER_API_KEY` (BYOK). Live runs fail loudly without it.
+Requires `OPENROUTER_API_KEY` (BYOK) for live model runs. Live runs fail loudly without it.
+`vantage-core attest` is separate: it needs `RUNTIMEAI_API_KEY` (a RuntimeAI Cloud key). Verify needs neither.
 
 ## Stranger path (under 30 min)
 
 **A — 60-second demo (no API key, no editing)**
 
 ```bash
-vantage-core demo
+vantage-core demo --save decisions/
+vantage-core report "$(vantage-core decisions latest)" --html decisions/suite.html
+# open decisions/suite.html — no RuntimeAI account
 ```
 
 Reads the **SAY:** lines out loud. Shows last-ship PASS → after-change BLOCK → the PR comment.
+`--save` writes the before/after JSON even without an API key.
 Needs a key only for a live model run: `vantage-core demo --live`.
 
-**Before / after files** (same story): [`examples/decisions/`](examples/decisions/) —
-
-```bash
-vantage-core decisions show examples/decisions/before_pass.json
-vantage-core decisions show examples/decisions/after_fail.json
-```
+Clone of this repo also has the same fixtures under [`examples/decisions/`](examples/decisions/).
 
 **B — Scaffold your own (partner authors — we don’t write your suite)**
 
@@ -67,8 +67,9 @@ vantage-core init
 vantage-core validate ./contracts/01_refuse_pii.yaml
 vantage-core suite validate ./suites/starter.suite.yaml
 vantage-core suite run ./suites/starter.suite.yaml --json --save decisions/
-vantage-core decisions list
 echo $?   # 0 iff suite pass_gate.passed
+vantage-core decisions list
+vantage-core report "$(vantage-core decisions latest)" --html decisions/suite.html
 ```
 
 **D — Single contract (still supported)**
@@ -198,7 +199,26 @@ vantage-core ci stub gitlab    # .gitlab-ci.vantage-core.yml
 # or: vantage-core init --ci
 ```
 
-CI stubs (mark as **required** check): [`examples/ci/`](examples/ci/) — PRs **re-decide vs last ship**, they do not one-shot `suite run`.
+CI stubs (mark as **required** check): [`examples/ci/`](examples/ci/) — PRs **re-decide vs last ship**, they do not one-shot `suite run`. Stubs upload **JSON + HTML + PDF** as `runtimeai-decision` (their artifact store — not a RuntimeAI Cloud dashboard).
+
+## Human scorecard from CI
+
+Same axes / pass-review-block / bind / compare-to-baseline as the Simulator memo — offline, no RuntimeAI account:
+
+```bash
+vantage-core report decisions/suite.json --html decisions/suite.html
+vantage-core report decisions/suite.json --pdf decisions/suite.pdf    # optional; no extra deps
+```
+
+Open the HTML in a browser (or the PDF). Footer states **local artifact — not RuntimeAI Cloud history**. Hosted multi-owner history remains paid.
+
+```bash
+# After any saved decision (dated file or the CI tee'd suite.json)
+vantage-core decisions latest                    # path of newest JSON
+vantage-core report "$(vantage-core decisions latest)" --html decisions/suite.html
+```
+
+GitHub Actions / GitLab stubs already run `report` with `if: always()` / `after_script` so a blocked gate still leaves a readable memo. Report failure does not change the suite exit code.
 
 ## Contract format (`runtimeai.contract/v1`)
 
@@ -257,9 +277,25 @@ vantage-core validate scorecard.json
 | `scorecard` | score `/10`, rubric, **`pass_gate`** |
 | `suite` | (suite run) per-path results + fail_policy |
 | `bind` | (when SHA known) git SHA / PR / headline |
+| `trigger` | (optional) `change` · `cadence` · `catalog` — why this decision fired |
 | `usd` | `est_eval` |
 | `exit` | `0` iff `pass_gate.passed` |
 | `integrity` | SHA-256 of the payload (includes bind + suite) |
+
+Detached countersignature (**verify is live**, offline and free; **attest is live** on production):
+
+```bash
+# after demo --save or suite run --save (dated file, not suite.json)
+export RUNTIMEAI_API_KEY=rai_live_…          # paid issuance; not OPENROUTER_API_KEY
+vantage-core attest "$(vantage-core decisions latest)"
+vantage-core verify "$(vantage-core decisions latest)"   # sibling *.attestation.json; no network
+```
+
+Default verify uses the keyring shipped in this package — no network. Design note: [`docs/ATTESTATION.md`](docs/ATTESTATION.md). Canonical published keys: https://www.vantageai.cc/runtimeai/attestation/keys.json
+
+CLI `attest` POSTs digest-only when `RUNTIMEAI_API_KEY` is set. Missing key fails cleanly (no POST). A server `501` maps to a clean message — never a raw 501 body. Verify remains free and offline.
+
+Cadence re-decide (`suite rerun --trigger cadence`) is the catch for silent same-id change. Catalog ID add/retire can accelerate it; it does not observe silent drift. [`docs/CADENCE.md`](docs/CADENCE.md).
 
 ## Bundled library
 
@@ -280,8 +316,8 @@ vantage-core validate scorecard.json
 3. Tag and release:
 
 ```bash
-git tag vantage-core-v0.1.7
-git push origin vantage-core-v0.1.7
+git tag vantage-core-v0.1.11
+git push origin vantage-core-v0.1.11
 # Create a GitHub Release for that tag → workflow publishes
 ```
 
@@ -312,6 +348,36 @@ vantage-core ingest examples/ingest/langsmith_export_sample.json \
 
 Then edit drafts → `suite run` / `suite rerun --baseline`.
 **Claim:** export/manual complement; drafts are suggestions until they own them.
+
+## Changelog (0.1.11)
+
+- **`verify` recomputes `suite_sha256` from suite content.** **0.1.10's verify does not recompute the suite hash; 0.1.11 does.** A client-supplied stamp cannot fake the bar.
+- Live `suite run` stamps suite `fail_under` and per-path `content_sha256` / `bar_sha256` so that recomputation is possible.
+- Stamp-vs-envelope fallback is gated on signed `pins.runner_version` **older than 0.1.11**. Missing hashes on a modern runner fail verify.
+
+## Changelog (0.1.10)
+
+- **Decision attestation ships here.** **PyPI 0.1.9 predates attestation and cannot be replaced** (PyPI versions are immutable). Git labeled some attestation work as 0.1.9; that published wheel does not include it. This is 0.1.10.
+- **`verify`** — offline, free, no account. Default keyring is shipped in the package (`vantage_core/keys/`). `--keyring PATH|URL` is opt-in for a newer kid.
+- **`attest`** — POST digest-only (`RUNTIMEAI_API_KEY`). Never sends the decision body.
+- **Published keyring** — in-package copy of https://www.vantageai.cc/runtimeai/attestation/keys.json (`kid` `vantage-attestation-2026-08`).
+- **Subject binding** — new envelopes carry an issuer-assigned `subject` (`acct_…` or `runtimeai:master`). Never client-supplied.
+- **`suite_sha256`** — suite definition hash on the envelope and on suite-level decisions.
+- **`trigger` stamping** — live `run` / `suite run` stamp `trigger.kind` (`change` / `cadence` / `catalog`) inside the integrity hash.
+- **`config_stamp.model_costs_sha256`** — populated from the rate table actually used on live runs.
+
+## Changelog (0.1.9)
+
+- **`demo --save`** writes example decision files with no API key (0.1.8 printed the walkthrough and saved nothing)
+- Offline demo prints `report --html` so you can open the scorecard next
+- Live `demo --live` no longer fails a correct short answer just because it is brief
+
+## Changelog (0.1.8)
+
+- **`vantage-core report <decision.json> --html`** — self-contained scorecard memo from `runtimeai.decision/v1` (offline; no account)
+- Optional **`--pdf`** (no extra deps) for a printable CI artifact
+- GitHub / GitLab stubs upload **JSON + HTML + PDF** as `runtimeai-decision` (their CI store — not a free Cloud dashboard)
+- Report generation is best-effort (`if: always()` / `|| true`); gate exit stays from `suite run`
 
 ## Changelog (0.1.7)
 

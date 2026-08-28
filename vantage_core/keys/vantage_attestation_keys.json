@@ -1,0 +1,14 @@
+{
+  "schema": "runtimeai.attestation-keyring/v1",
+  "canonical_url": "https://www.vantageai.cc/runtimeai/attestation/keys.json",
+  "issued": "2026-08-27T00:00:00Z",
+  "keys": [
+    {
+      "kid": "vantage-attestation-2026-08",
+      "alg": "ed25519",
+      "public_key_b64": "EcnfP/A/tX+cY0Epi10pdVu6p/ng96jpe/nduiENTcI=",
+      "status": "active",
+      "not_before": "2026-08-27T00:00:00Z"
+    }
+  ]
+}

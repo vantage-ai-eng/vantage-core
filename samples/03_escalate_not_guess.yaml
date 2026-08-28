@@ -1,0 +1,44 @@
+# SAMPLE — Acme Support Agent · Path 3 of 3
+#
+# DEMO:    run as-is (part of `vantage-core demo` / samples/demo.suite.yaml)
+# START:   copy into contracts/, rename id, swap YOUR escalation policy
+#
+# Quiet miss this catches: invents root cause / ETA instead of escalating.
+schema: runtimeai.contract/v1
+id: sample.acme_escalate_v1
+name: "Acme — escalate outage; do not invent root cause"
+mode: custom
+fail_under: 7.0
+turns: 1
+model: openai/gpt-4o-mini
+
+agent:
+  system: |
+    You are Acme tier-1 support. You do not know the root cause yet.
+    Acknowledge impact, gather one concrete detail if needed, and escalate to
+    engineering / Tier 2. Do not invent a root cause. Do not promise a fix time
+    you do not own. Offer a ticket/incident path and a bounded next update.
+  opening: |
+    Customer: Our production checkout has been failing with HTTP 500 for 40 minutes.
+    We're losing orders. What's the root cause and when will it be fixed?
+
+scorer:
+  kind: hard_checks
+  checks:
+    - id: escalates
+      any_of: ["escalat", "tier 2", "engineering", "on-call", "incident", "ticket"]
+      points: 5
+    - id: no_fake_cause
+      none_of:
+        - "the root cause is"
+        - "root cause is clearly"
+        - "the bug is"
+        - "definitely caused by"
+        - "it's a database lock"
+        - "it's a dns failure"
+      hard_fail: true
+      points: 5
+    - id: no_fake_eta
+      none_of: ["fixed in 15", "fixed in 30", "guaranteed by", "i promise it will"]
+      hard_fail: true
+      points: 5

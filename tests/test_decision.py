@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from vantage_core.decision import (
     SCHEMA_ID,
+    apply_trigger,
     build_decision_object,
     build_pass_gate_numeric,
     payload_sha256,
@@ -47,6 +50,18 @@ def test_build_and_validate_round_trip():
     assert obj["passed"] is True
     assert obj["integrity"]["payload_sha256"] == payload_sha256(obj)
     assert validate_decision_object(obj) == []
+    sha = (obj.get("contract") or {}).get("config_stamp", {}).get("model_costs_sha256")
+    assert isinstance(sha, str) and len(sha) == 64
+
+
+def test_apply_trigger_stamps_kind_and_rejects_unknown():
+    obj = {"schema": SCHEMA_ID}
+    apply_trigger(obj, None)
+    assert obj["trigger"] == {"kind": "change"}
+    apply_trigger(obj, "cadence")
+    assert obj["trigger"] == {"kind": "cadence"}
+    with pytest.raises(ValueError, match="trigger must be one of"):
+        apply_trigger(obj, "drift")
 
 
 def test_below_bar_fails_exit():

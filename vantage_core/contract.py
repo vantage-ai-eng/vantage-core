@@ -37,8 +37,14 @@ class ResolvedContract:
     library_scenario_id: str | None
     source_path: Path | None = None
 
-    def content_sha256(self) -> str:
-        payload = {
+    def _content_payload(self) -> dict[str, Any]:
+        """Fields hashed by ``content_sha256`` (per-scenario pin).
+
+        Task/prompt + rubric (hard_checks including points / any_of / none_of /
+        hard_fail) + scorer identity. Does **not** include ``fail_under``,
+        ``name``, ``turns``, ``model``, or YAML comments.
+        """
+        return {
             "id": self.id,
             "mode": self.mode,
             "agent_system": self.agent_system,
@@ -57,6 +63,32 @@ class ResolvedContract:
             ],
             "library_scenario_id": self.library_scenario_id,
         }
+
+    def content_sha256(self) -> str:
+        """Per-scenario pin: task/prompt + rubric. Does not include fail_under.
+
+        Used as ``scenario_sha256`` on single check-rides. Softening
+        ``fail_under`` does **not** change this hash — that is why suite
+        hashing uses ``contract_bar_sha256`` instead.
+        """
+        raw = json.dumps(
+            self._content_payload(),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def contract_bar_sha256(self) -> str:
+        """Bar identity for ``suite_content_sha256`` paths.
+
+        Same canonical object as ``content_sha256`` plus ``fail_under``
+        (the pass threshold). Same dumps as ``payload_sha256``. Not used as
+        the per-scenario pin — changing this must not invalidate
+        ``content_sha256`` callers.
+        """
+        payload = dict(self._content_payload())
+        payload["fail_under"] = self.fail_under
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 

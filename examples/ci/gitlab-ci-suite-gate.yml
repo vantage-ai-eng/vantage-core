@@ -1,13 +1,15 @@
-# vantage-core still-trust suite gate (0.1.7+)
+# vantage-core still-trust suite gate (0.1.8+)
 # Include from .gitlab-ci.yml:
 #   include:
 #     - local: .gitlab-ci.vantage-core.yml
 # Or copy into .gitlab-ci.yml if you have no other jobs.
 #
 # CI/CD variable: OPENROUTER_API_KEY (masked)
-# MR: re-decide vs last default-branch artifact when GitLab can fetch it.
+# MR/push: re-decide vs last ship (trigger=change).
+# Pipeline schedule: cadence re-decide vs last ship (trigger=cadence).
 # Bind: CI_COMMIT_SHA → decision.bind (source gitlab_ci)
 # Comment: bind + compare_to_baseline via CI_JOB_TOKEN / GITLAB_TOKEN
+# Memo: suite.html (+ suite.pdf) as artifacts — not a Cloud dashboard.
 
 stages:
   - gate
@@ -18,6 +20,7 @@ suite-gate:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "schedule"
   variables:
     PIP_DISABLE_PIP_VERSION_CHECK: "1"
   needs:
@@ -27,7 +30,7 @@ suite-gate:
       artifacts: true
       optional: true
   before_script:
-    - pip install -q -U 'vantage-core>=0.1.7'
+    - pip install -q -U 'vantage-core>=0.1.8'
     - vantage-core suite validate suites/starter.suite.yaml
   script:
     - mkdir -p baseline decisions
@@ -37,16 +40,30 @@ suite-gate:
       fi
     - |
       set -euo pipefail
-      if [ -n "${CI_MERGE_REQUEST_IID:-}" ] && [ -f baseline/suite.json ]; then
+      if [ "${CI_PIPELINE_SOURCE:-}" = "schedule" ] && [ -f baseline/suite.json ]; then
         vantage-core suite rerun suites/starter.suite.yaml \
-          --baseline baseline/suite.json \
+          --baseline baseline/suite.json --trigger cadence \
+          --json --save decisions/ --ci-comment | tee decisions/suite.json
+      elif [ -n "${CI_MERGE_REQUEST_IID:-}" ] && [ -f baseline/suite.json ]; then
+        vantage-core suite rerun suites/starter.suite.yaml \
+          --baseline baseline/suite.json --trigger change \
           --json --save decisions/ --ci-comment | tee decisions/suite.json
       else
         vantage-core suite run suites/starter.suite.yaml \
+          --trigger change \
           --json --save decisions/ --ci-comment | tee decisions/suite.json
+      fi
+  after_script:
+    - |
+      if [ -f decisions/suite.json ]; then
+        vantage-core report decisions/suite.json \
+          --html decisions/suite.html \
+          --pdf decisions/suite.pdf || true
       fi
   artifacts:
     when: always
     paths:
       - decisions/suite.json
+      - decisions/suite.html
+      - decisions/suite.pdf
     expire_in: 30 days

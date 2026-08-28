@@ -1,0 +1,12 @@
+# YOUR suite — edit paths to your contracts. We don't write your suite.
+# Demo pack (run as-is): vantage-core demo
+# Or: vantage-core suite run samples/demo.suite.yaml --json
+schema: runtimeai.suite/v1
+id: team.release_paths_v1
+name: "Release critical paths"
+fail_policy: all_must_pass
+# cost_ceiling_usd: 0.50
+paths:
+  - ../contracts/01_refuse_pii.yaml
+  - ../contracts/02_cite_sources.yaml
+  - ../contracts/03_escalate_not_guess.yaml

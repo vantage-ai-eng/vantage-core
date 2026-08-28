@@ -16,6 +16,7 @@ from vantage_core.suite import (
     load_suite,
     resolve_suite,
     run_suite,
+    suite_content_sha256,
     validate_suite_files,
 )
 
@@ -94,6 +95,176 @@ def test_suite_run_aggregate_pass(tmp_path):
     assert decision["exit"]["code"] == 0
     assert validate_decision_object(decision) == []
     assert decision["integrity"]["payload_sha256"] == payload_sha256(decision)
+    stamp = (decision.get("contract") or {}).get("config_stamp") or {}
+    sha = stamp.get("model_costs_sha256")
+    assert isinstance(sha, str) and len(sha) == 64
+    assert all(c in "0123456789abcdef" for c in sha)
+    expected_suite_sha = suite_content_sha256(suite)
+    assert decision["suite"]["suite_sha256"] == expected_suite_sha
+    assert stamp.get("suite_sha256") == expected_suite_sha
+    assert "fail_under" in decision["suite"]
+    for path in decision["suite"]["paths"]:
+        assert isinstance(path.get("content_sha256"), str)
+        assert len(path["content_sha256"]) == 64
+    for nested in decision["path_decisions"]:
+        bar = (nested.get("contract") or {}).get("bar_sha256")
+        assert isinstance(bar, str) and len(bar) == 64
+    from vantage_core.attestation import recompute_suite_sha256_from_decision
+
+    assert recompute_suite_sha256_from_decision(decision) == expected_suite_sha
+    assert len(expected_suite_sha) == 64
+    assert decision["trigger"] == {"kind": "change"}
+
+
+def test_suite_run_stamps_cadence_trigger():
+    suite = load_suite(SUITE_PATH)
+    decision = run_suite(
+        suite, llm=_fake_llm_pass, runner_version="0.1.2-test", trigger="cadence"
+    )
+    assert decision["trigger"] == {"kind": "cadence"}
+    assert validate_decision_object(decision) == []
+    assert decision["integrity"]["payload_sha256"] == payload_sha256(decision)
+    without = {k: v for k, v in decision.items() if k != "trigger"}
+    assert payload_sha256(decision) != payload_sha256(without)
+
+
+def test_suite_content_sha256_identical_suites_match():
+    h1 = suite_content_sha256(load_suite(SUITE_PATH))
+    h2 = suite_content_sha256(load_suite(SUITE_PATH))
+    assert h1 == h2
+    assert len(h1) == 64
+    assert all(c in "0123456789abcdef" for c in h1)
+
+
+def test_suite_content_sha256_changes_when_path_content_changes(tmp_path):
+    import shutil
+
+    for name in ("01_refuse_pii.yaml", "02_cite_sources.yaml", "03_escalate_not_guess.yaml"):
+        shutil.copy(STARTERS / name, tmp_path / name)
+    (tmp_path / "suite.yaml").write_text(
+        "schema: runtimeai.suite/v1\n"
+        "id: example.release_paths_v1\n"
+        "fail_policy: all_must_pass\n"
+        "paths:\n"
+        "  - 01_refuse_pii.yaml\n"
+        "  - 02_cite_sources.yaml\n"
+        "  - 03_escalate_not_guess.yaml\n",
+        encoding="utf-8",
+    )
+    before = suite_content_sha256(load_suite(tmp_path / "suite.yaml"))
+    pii = tmp_path / "01_refuse_pii.yaml"
+    pii.write_text(
+        pii.read_text(encoding="utf-8").replace("export all SSNs", "export all SSNs AND emails"),
+        encoding="utf-8",
+    )
+    after = suite_content_sha256(load_suite(tmp_path / "suite.yaml"))
+    assert before != after
+
+    # Adding a path (duplicate the first) also moves the hash — visibility, not a freeze.
+    (tmp_path / "suite.yaml").write_text(
+        "schema: runtimeai.suite/v1\n"
+        "id: example.release_paths_v1\n"
+        "fail_policy: all_must_pass\n"
+        "paths:\n"
+        "  - 01_refuse_pii.yaml\n"
+        "  - 02_cite_sources.yaml\n"
+        "  - 03_escalate_not_guess.yaml\n"
+        "  - 01_refuse_pii.yaml\n",
+        encoding="utf-8",
+    )
+    added = suite_content_sha256(load_suite(tmp_path / "suite.yaml"))
+    assert added != after
+
+
+def _write_one_path_suite(tmp_path, contract_yaml: str, *, extra_suite: str = "") -> Path:
+    (tmp_path / "path.yaml").write_text(contract_yaml, encoding="utf-8")
+    (tmp_path / "suite.yaml").write_text(
+        "schema: runtimeai.suite/v1\n"
+        "id: team.bar\n"
+        "fail_policy: all_must_pass\n"
+        + extra_suite
+        + "paths:\n  - path.yaml\n",
+        encoding="utf-8",
+    )
+    return tmp_path / "suite.yaml"
+
+
+def test_suite_sha256_changes_when_fail_under_softens(tmp_path):
+    base = (STARTERS / "01_refuse_pii.yaml").read_text(encoding="utf-8")
+    _write_one_path_suite(tmp_path, base)
+    before = suite_content_sha256(load_suite(tmp_path / "suite.yaml"))
+    _write_one_path_suite(tmp_path, base.replace("fail_under: 7.0", "fail_under: 4.0"))
+    after = suite_content_sha256(load_suite(tmp_path / "suite.yaml"))
+    assert before != after
+
+    from vantage_core.contract import load_contract
+
+    a = load_contract(tmp_path / "path.yaml")
+    (tmp_path / "path_hard.yaml").write_text(base, encoding="utf-8")
+    b = load_contract(tmp_path / "path_hard.yaml")
+    assert a.content_sha256() == b.content_sha256()
+    assert a.contract_bar_sha256() != b.contract_bar_sha256()
+
+
+def test_suite_sha256_changes_when_rubric_points_soften(tmp_path):
+    base = (STARTERS / "01_refuse_pii.yaml").read_text(encoding="utf-8")
+    _write_one_path_suite(tmp_path, base)
+    before = suite_content_sha256(load_suite(tmp_path / "suite.yaml"))
+    assert "points: 5" in base
+    softened = base.replace("points: 5", "points: 1", 1)
+    assert softened != base
+    _write_one_path_suite(tmp_path, softened)
+    after = suite_content_sha256(load_suite(tmp_path / "suite.yaml"))
+    assert before != after
+
+
+def test_suite_sha256_ignores_name_and_yaml_comments(tmp_path):
+    """name and YAML comments are not in the bar hash. fail_under is."""
+    base = (STARTERS / "01_refuse_pii.yaml").read_text(encoding="utf-8")
+    _write_one_path_suite(tmp_path, base)
+    before = suite_content_sha256(load_suite(tmp_path / "suite.yaml"))
+    renamed = base.replace('name: "Refuse PII export"', 'name: "Softer marketing title"')
+    commented = "# quieter than dropping a scenario\n" + renamed
+    _write_one_path_suite(tmp_path, commented)
+    after = suite_content_sha256(load_suite(tmp_path / "suite.yaml"))
+    assert before == after
+
+
+def test_suite_sha256_stable_under_path_reorder(tmp_path):
+    import shutil
+
+    for name in ("01_refuse_pii.yaml", "02_cite_sources.yaml"):
+        shutil.copy(STARTERS / name, tmp_path / name)
+    (tmp_path / "ab.yaml").write_text(
+        "schema: runtimeai.suite/v1\n"
+        "id: team.order\n"
+        "fail_policy: all_must_pass\n"
+        "paths:\n"
+        "  - 01_refuse_pii.yaml\n"
+        "  - 02_cite_sources.yaml\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "ba.yaml").write_text(
+        "schema: runtimeai.suite/v1\n"
+        "id: team.order\n"
+        "fail_policy: all_must_pass\n"
+        "paths:\n"
+        "  - 02_cite_sources.yaml\n"
+        "  - 01_refuse_pii.yaml\n",
+        encoding="utf-8",
+    )
+    assert suite_content_sha256(load_suite(tmp_path / "ab.yaml")) == suite_content_sha256(
+        load_suite(tmp_path / "ba.yaml")
+    )
+
+
+def test_suite_sha256_changes_when_suite_fail_under_set(tmp_path):
+    base = (STARTERS / "01_refuse_pii.yaml").read_text(encoding="utf-8")
+    _write_one_path_suite(tmp_path, base)
+    before = suite_content_sha256(load_suite(tmp_path / "suite.yaml"))
+    _write_one_path_suite(tmp_path, base, extra_suite="fail_under: 3.0\n")
+    after = suite_content_sha256(load_suite(tmp_path / "suite.yaml"))
+    assert before != after
 
 
 def test_suite_run_aggregate_fail_on_path():

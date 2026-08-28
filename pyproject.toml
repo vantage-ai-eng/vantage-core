@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vantage-core"
-version = "0.1.7"
+version = "0.1.11"
 description = "RuntimeAI check-ride CLI — portable decision artifact for agent release gates"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,11 +27,12 @@ dependencies = [
   "openai>=1.40.0",
   "pyyaml>=6.0",
   "python-dotenv>=1.0",
+  "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]
 # Alias kept for docs that say pip install "vantage-core[run]"
-run = ["openai>=1.40.0", "pyyaml>=6.0", "python-dotenv>=1.0"]
+run = ["openai>=1.40.0", "pyyaml>=6.0", "python-dotenv>=1.0", "cryptography>=42.0"]
 dev = ["pytest>=8.0", "build", "twine"]
 
 [project.scripts]
@@ -53,6 +54,7 @@ vantage_core = [
   "schemas/*.json",
   "fixtures/*",
   "data/*.json",
+  "keys/*.json",
   "starters/*.yaml",
   "samples/*.yaml",
   "samples/*.md",

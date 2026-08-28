@@ -77,9 +77,14 @@ def run_contract_into_store(
                 last_err = e
                 time.sleep(0.4)
         if not response:
+            detail = getattr(last_err, "detail", None)
+            if isinstance(detail, dict) and detail.get("message"):
+                err_text = str(detail["message"])
+            else:
+                err_text = str(last_err or "Empty model response")
             run = store.load(session_id)
             run["status"] = "error"
-            run["error"] = str(last_err or "Empty model response")
+            run["error"] = err_text
             append_event(
                 run,
                 kind="meta",

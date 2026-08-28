@@ -13,6 +13,7 @@ from typing import Any
 
 SCHEMA_ID = "runtimeai.decision/v1"
 RUNNER_NAME = "vantage-core"
+TRIGGER_KINDS = frozenset({"change", "cadence", "catalog"})
 
 # Nested keys excluded from the integrity hash (they embed the hash / wall clock).
 _INTEGRITY_SKIP = frozenset({"integrity", "generated_at"})
@@ -50,6 +51,25 @@ def payload_sha256(decision: dict[str, Any]) -> str:
     """SHA-256 of the decision with integrity + generated_at stripped."""
     body = {k: v for k, v in decision.items() if k not in _INTEGRITY_SKIP}
     return hashlib.sha256(_canonical_json(body).encode("utf-8")).hexdigest()
+
+
+def apply_trigger(decision: dict[str, Any], kind: str | None = "change") -> dict[str, Any]:
+    """Stamp why this decision fired. Call before the final integrity seal.
+
+    Live suite/run paths always stamp. Default ``change`` (PR/push). Empty or
+    None also stamps ``change`` — unstamped records are legacy, not an implicit
+    default. ``cadence`` — scheduled re-decide. ``catalog`` — ID add/retire
+    accelerant (not silent-drift observation).
+
+    ``trigger.kind`` is client-asserted (we cannot observe their CI). Cadence
+    evidence on an attestation chain is ``signed_at`` spacing (issuer clock),
+    not this label.
+    """
+    raw = str(kind or "change").strip().lower() or "change"
+    if raw not in TRIGGER_KINDS:
+        raise ValueError(f"trigger must be one of {sorted(TRIGGER_KINDS)}")
+    decision["trigger"] = {"kind": raw}
+    return decision
 
 
 def build_pass_gate_numeric(
@@ -222,6 +242,10 @@ def build_decision_object(
             "git_sha": None,
         }
     )
+    if not stamp.get("model_costs_sha256"):
+        from vantage_core.cost import model_costs_sha256 as _costs_sha
+
+        stamp["model_costs_sha256"] = _costs_sha()
     if bind and bind.get("git_sha") and not stamp.get("git_sha"):
         stamp["git_sha"] = bind.get("git_sha")
 
@@ -286,7 +310,7 @@ def build_decision_object(
         "overall_judgement": overall_judgement,
         "scorecard_hint": (
             f"CLI: --json emits {SCHEMA_ID}. "
-            "PM PDF/HTML: same scenario in Simulator or Cloud API."
+            "Human memo: vantage-core report <file> --html (offline CI artifact; not Cloud history)."
         ),
     }
     if bind_out:

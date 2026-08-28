@@ -1,0 +1,30 @@
+{
+  "schema": "runtimeai.attestation-keyring/v1",
+  "canonical_url": "https://www.vantageai.cc/runtimeai/attestation/keys.json",
+  "issued": "2026-08-27T00:00:00Z",
+  "keys": [
+    {
+      "kid": "test-active-1",
+      "alg": "ed25519",
+      "public_key_b64": "Sv3jLyTF27uQ6oefbn0eNv1yMmry6tbhDdz6fvfUpMY=",
+      "status": "active",
+      "not_before": "2026-01-01T00:00:00Z"
+    },
+    {
+      "kid": "test-rotated-1",
+      "alg": "ed25519",
+      "public_key_b64": "PUYoIMizRipyZLAHcvAVb28s2h29U94ORYtkyl3chd0=",
+      "status": "rotated",
+      "not_before": "2025-01-01T00:00:00Z",
+      "not_after": "2026-06-01T00:00:00Z"
+    },
+    {
+      "kid": "test-compromised-1",
+      "alg": "ed25519",
+      "public_key_b64": "frOQHiM34Zpjn8rGfAoeOoUCBEoG8a4s/tEbJPn2GNE=",
+      "status": "compromised",
+      "not_before": "2026-01-01T00:00:00Z",
+      "compromised_at": "2026-03-15T00:00:00Z"
+    }
+  ]
+}

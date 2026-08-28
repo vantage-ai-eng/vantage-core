@@ -2,6 +2,7 @@
 
 Write with: vantage-core ci stub github|gitlab
 Not a GitHub App. Partner marks the job as a required check.
+Human memo (HTML/PDF) is a CI artifact in *their* store — not a Cloud dashboard.
 """
 
 from __future__ import annotations
@@ -13,19 +14,23 @@ GITLAB_DEFAULT = Path(".gitlab-ci.vantage-core.yml")
 
 GITHUB_SUITE_GATE_YAML = """\
 # Still-trust suite gate — mark as a required check on the protected branch.
-# PR: re-decide vs last successful default-branch decision artifact.
-# Default branch: record a new ship decision.
+# PR/push: re-decide vs last ship (trigger=change).
+# Weekly schedule: cadence re-decide vs last ship (trigger=cadence).
 # Bind: GITHUB_SHA / PR → decision.bind
 # Comment: bind headline + compare_to_baseline (pull-requests: write)
+# Memo: suite.html (+ suite.pdf) uploaded as artifacts — not a Cloud dashboard.
 #
-# Requires vantage-core 0.1.7+  ·  secret: OPENROUTER_API_KEY
+# Requires vantage-core 0.1.8+  ·  secret: OPENROUTER_API_KEY
 # First PR after a green default-branch run is when --baseline appears.
+# Cadence does not observe silent same-id drift; it re-decides.
 name: vantage-core suite gate
 
 on:
   pull_request:
   push:
     branches: [main, master]
+  schedule:
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
@@ -43,13 +48,13 @@ jobs:
           python-version: "3.12"
 
       - name: Install vantage-core
-        run: pip install -U 'vantage-core>=0.1.7'
+        run: pip install -U 'vantage-core>=0.1.8'
 
       - name: Validate suite
         run: vantage-core suite validate suites/starter.suite.yaml
 
       - name: Restore last ship decision
-        if: github.event_name == 'pull_request'
+        if: github.event_name != 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -67,19 +72,34 @@ jobs:
             mv baseline/decisions/suite.json baseline/suite.json
           fi
 
-      - name: Re-decide vs last ship (PR) or record ship (default branch)
+      - name: Re-decide vs last ship (PR/cadence) or record ship (default branch)
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           set -euo pipefail
           mkdir -p decisions
-          if [ "${{ github.event_name }}" = "pull_request" ] && [ -f baseline/suite.json ]; then
+          if [ "${{ github.event_name }}" = "schedule" ] && [ -f baseline/suite.json ]; then
             vantage-core suite rerun suites/starter.suite.yaml \\
-              --baseline baseline/suite.json \\
+              --baseline baseline/suite.json --trigger cadence \\
+              --json --save decisions/ --ci-comment | tee decisions/suite.json
+          elif [ "${{ github.event_name }}" = "pull_request" ] && [ -f baseline/suite.json ]; then
+            vantage-core suite rerun suites/starter.suite.yaml \\
+              --baseline baseline/suite.json --trigger change \\
               --json --save decisions/ --ci-comment | tee decisions/suite.json
           else
             vantage-core suite run suites/starter.suite.yaml \\
+              --trigger change \\
               --json --save decisions/ --ci-comment | tee decisions/suite.json
+          fi
+
+      - name: Human scorecard memo
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ -f decisions/suite.json ]; then
+            vantage-core report decisions/suite.json \\
+              --html decisions/suite.html \\
+              --pdf decisions/suite.pdf
           fi
 
       - name: Upload decision artifact
@@ -87,21 +107,26 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: runtimeai-decision
-          path: decisions/suite.json
+          path: |
+            decisions/suite.json
+            decisions/suite.html
+            decisions/suite.pdf
           if-no-files-found: ignore
 """
 
 GITLAB_SUITE_GATE_YAML = """\
-# vantage-core still-trust suite gate (0.1.7+)
+# vantage-core still-trust suite gate (0.1.8+)
 # Include from .gitlab-ci.yml:
 #   include:
 #     - local: .gitlab-ci.vantage-core.yml
 # Or copy into .gitlab-ci.yml if you have no other jobs.
 #
 # CI/CD variable: OPENROUTER_API_KEY (masked)
-# MR: re-decide vs last default-branch artifact when GitLab can fetch it.
+# MR/push: re-decide vs last ship (trigger=change).
+# Pipeline schedule: cadence re-decide vs last ship (trigger=cadence).
 # Bind: CI_COMMIT_SHA → decision.bind (source gitlab_ci)
 # Comment: bind + compare_to_baseline via CI_JOB_TOKEN / GITLAB_TOKEN
+# Memo: suite.html (+ suite.pdf) as artifacts — not a Cloud dashboard.
 
 stages:
   - gate
@@ -112,6 +137,7 @@ suite-gate:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "schedule"
   variables:
     PIP_DISABLE_PIP_VERSION_CHECK: "1"
   needs:
@@ -121,7 +147,7 @@ suite-gate:
       artifacts: true
       optional: true
   before_script:
-    - pip install -q -U 'vantage-core>=0.1.7'
+    - pip install -q -U 'vantage-core>=0.1.8'
     - vantage-core suite validate suites/starter.suite.yaml
   script:
     - mkdir -p baseline decisions
@@ -131,18 +157,32 @@ suite-gate:
       fi
     - |
       set -euo pipefail
-      if [ -n "${CI_MERGE_REQUEST_IID:-}" ] && [ -f baseline/suite.json ]; then
+      if [ "${CI_PIPELINE_SOURCE:-}" = "schedule" ] && [ -f baseline/suite.json ]; then
         vantage-core suite rerun suites/starter.suite.yaml \\
-          --baseline baseline/suite.json \\
+          --baseline baseline/suite.json --trigger cadence \\
+          --json --save decisions/ --ci-comment | tee decisions/suite.json
+      elif [ -n "${CI_MERGE_REQUEST_IID:-}" ] && [ -f baseline/suite.json ]; then
+        vantage-core suite rerun suites/starter.suite.yaml \\
+          --baseline baseline/suite.json --trigger change \\
           --json --save decisions/ --ci-comment | tee decisions/suite.json
       else
         vantage-core suite run suites/starter.suite.yaml \\
+          --trigger change \\
           --json --save decisions/ --ci-comment | tee decisions/suite.json
+      fi
+  after_script:
+    - |
+      if [ -f decisions/suite.json ]; then
+        vantage-core report decisions/suite.json \\
+          --html decisions/suite.html \\
+          --pdf decisions/suite.pdf || true
       fi
   artifacts:
     when: always
     paths:
       - decisions/suite.json
+      - decisions/suite.html
+      - decisions/suite.pdf
     expire_in: 30 days
 """
 

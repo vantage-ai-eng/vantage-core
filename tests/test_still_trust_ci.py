@@ -191,10 +191,16 @@ def test_ci_stub_github_and_gitlab(tmp_path):
     gh_text = gh.read_text(encoding="utf-8")
     gl_text = gl.read_text(encoding="utf-8")
     assert "suite rerun" in gh_text
+    assert "--trigger cadence" in gh_text
+    assert "--trigger change" in gh_text
+    assert "cron:" in gh_text
+    assert "schedule:" in gh_text
     assert "--ci-comment" in gh_text
     assert "--baseline" in gh_text
     assert "pull-requests: write" in gh_text
     assert "suite rerun" in gl_text
+    assert "--trigger cadence" in gl_text
+    assert "CI_PIPELINE_SOURCE" in gl_text
     assert "CI_COMMIT_SHA" in gl_text or "gitlab" in gl_text.lower()
     assert main(["ci", "stub", "github", "--out", str(tmp_path / "cli.yml"), "--force"]) == 0
 

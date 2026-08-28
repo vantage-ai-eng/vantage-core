@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.1.7"
+__version__ = "0.1.11"
 
 from vantage_core.decision import (
     SCHEMA_ID,

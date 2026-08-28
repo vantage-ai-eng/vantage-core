@@ -64,7 +64,10 @@ def assess_task_run_trust(run: dict, score: dict) -> dict[str, Any]:
         level = "low"
 
     body = _protagonist_content(run)
-    if len(body.strip()) < 120:
+    # 1-turn hard-check contracts are allowed to be short ("No — DOC-104 caps at $75.").
+    # Empty is still untrustworthy; 120 chars is a multi-turn substance floor.
+    min_len = 20 if int(run.get("turn_budget") or 1) <= 1 else 120
+    if len(body.strip()) < min_len:
         warnings.append("Very short agent output — may not be substantive enough to score reliably.")
         level = "low"
 

@@ -1,17 +1,21 @@
 # Still-trust suite gate — mark as a required check on the protected branch.
-# PR: re-decide vs last successful default-branch decision artifact.
-# Default branch: record a new ship decision.
+# PR/push: re-decide vs last ship (trigger=change).
+# Weekly schedule: cadence re-decide vs last ship (trigger=cadence).
 # Bind: GITHUB_SHA / PR → decision.bind
 # Comment: bind headline + compare_to_baseline (pull-requests: write)
+# Memo: suite.html (+ suite.pdf) uploaded as artifacts — not a Cloud dashboard.
 #
-# Requires vantage-core 0.1.7+  ·  secret: OPENROUTER_API_KEY
+# Requires vantage-core 0.1.8+  ·  secret: OPENROUTER_API_KEY
 # First PR after a green default-branch run is when --baseline appears.
+# Cadence does not observe silent same-id drift; it re-decides.
 name: vantage-core suite gate
 
 on:
   pull_request:
   push:
     branches: [main, master]
+  schedule:
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
@@ -29,13 +33,13 @@ jobs:
           python-version: "3.12"
 
       - name: Install vantage-core
-        run: pip install -U 'vantage-core>=0.1.7'
+        run: pip install -U 'vantage-core>=0.1.8'
 
       - name: Validate suite
         run: vantage-core suite validate suites/starter.suite.yaml
 
       - name: Restore last ship decision
-        if: github.event_name == 'pull_request'
+        if: github.event_name != 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -53,19 +57,34 @@ jobs:
             mv baseline/decisions/suite.json baseline/suite.json
           fi
 
-      - name: Re-decide vs last ship (PR) or record ship (default branch)
+      - name: Re-decide vs last ship (PR/cadence) or record ship (default branch)
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           set -euo pipefail
           mkdir -p decisions
-          if [ "${{ github.event_name }}" = "pull_request" ] && [ -f baseline/suite.json ]; then
+          if [ "${{ github.event_name }}" = "schedule" ] && [ -f baseline/suite.json ]; then
             vantage-core suite rerun suites/starter.suite.yaml \
-              --baseline baseline/suite.json \
+              --baseline baseline/suite.json --trigger cadence \
+              --json --save decisions/ --ci-comment | tee decisions/suite.json
+          elif [ "${{ github.event_name }}" = "pull_request" ] && [ -f baseline/suite.json ]; then
+            vantage-core suite rerun suites/starter.suite.yaml \
+              --baseline baseline/suite.json --trigger change \
               --json --save decisions/ --ci-comment | tee decisions/suite.json
           else
             vantage-core suite run suites/starter.suite.yaml \
+              --trigger change \
               --json --save decisions/ --ci-comment | tee decisions/suite.json
+          fi
+
+      - name: Human scorecard memo
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ -f decisions/suite.json ]; then
+            vantage-core report decisions/suite.json \
+              --html decisions/suite.html \
+              --pdf decisions/suite.pdf
           fi
 
       - name: Upload decision artifact
@@ -73,5 +92,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: runtimeai-decision
-          path: decisions/suite.json
+          path: |
+            decisions/suite.json
+            decisions/suite.html
+            decisions/suite.pdf
           if-no-files-found: ignore

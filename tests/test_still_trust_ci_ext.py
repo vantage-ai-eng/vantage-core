@@ -203,7 +203,7 @@ def test_github_stub_is_still_trust_not_oneshot():
     assert "pull-requests: write" in text
     assert "runtimeai-decision" in text
     assert "OPENROUTER_API_KEY" in text
-    assert "vantage-core>=0.1.7" in text
+    assert "vantage-core>=0.1.8" in text
 
 
 def test_init_ci_writes_workflow(tmp_path):
@@ -224,6 +224,26 @@ def test_demo_offline_talk_track(capsys):
     assert "ci stub github" in out
     assert "PR #142" in out
     assert MARKER in out
+    assert "report" in out
+    assert "--html" in out
+
+
+def test_demo_offline_save_writes_json_for_report(tmp_path, capsys):
+    dest = tmp_path / "decisions"
+    code = main(["demo", "--offline", "--save", str(dest)])
+    assert code == 0
+    files = sorted(dest.glob("*.json"))
+    assert len(files) == 2
+    err = capsys.readouterr().err
+    assert "saved" in err
+    latest = max(files, key=lambda p: p.name)
+    html = tmp_path / "suite.html"
+    assert main(["report", str(latest), "--html", str(html)]) == 0
+    text = html.read_text(encoding="utf-8")
+    assert "BLOCK" in text or "FAIL" in text
+    assert "runtimeai.decision/v1" in text
+    assert "Local artifact" in text
+    assert "cite" in text.lower() or "REGRESSION" in text or "baseline" in text.lower()
 
 
 def test_demo_offline_json():
