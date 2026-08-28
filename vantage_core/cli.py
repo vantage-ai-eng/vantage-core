@@ -795,7 +795,7 @@ def _write_project_readme(root: Path, *, force: bool) -> None:
         - `contracts/` — **your** working copies (edit these)
         - `decisions/` — dated JSON ledger (free; not hosted history)
         - CI: `vantage-core ci stub github` (or `init --ci`)
-        - Checklist: https://github.com/simonbright/vantage/blob/main/marketing/growth/AUTHORING_CHECKLIST.md
+        - Checklist: https://www.vantageai.cc/runtimeai/method/cicd#rai-cicd-custom-fixtures
         - CI docs: https://www.vantageai.cc/runtimeai/method/cicd
         """
     )

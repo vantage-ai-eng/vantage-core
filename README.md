@@ -431,4 +431,4 @@ VANTAGE_USE_MONOREPO=1 vantage-core run --scenario support_escalation_v1 …
 
 - Product page: https://www.vantageai.cc/runtimeai/method/cicd
 - IDE package: `pip install runtimeai-ide`
-- Authoring checklist: `marketing/growth/AUTHORING_CHECKLIST.md`
+- Authoring checklist: https://www.vantageai.cc/runtimeai/method/cicd#rai-cicd-custom-fixtures
