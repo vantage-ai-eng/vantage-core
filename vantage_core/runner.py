@@ -9,17 +9,18 @@ from typing import Any, Callable
 
 from vantage_core import __version__
 from vantage_core.contract import ResolvedContract
-from vantage_core.cost import estimate_run_cost_usd, model_costs_sha256
+from vantage_core.cost import model_costs_sha256, resolve_run_cost
 from vantage_core.decision import (
     apply_route_and_exit,
     apply_trigger,
     build_decision_object,
     build_pass_gate_numeric,
 )
+from vantage_core.latency import derive_latency
 from vantage_core.llm_openrouter import llm_complete_with_timeout, openrouter_api_key
 from vantage_core.run_store import RunStore
 from vantage_core.scorers import score_run
-from vantage_core.task_runner import run_contract_into_store
+from vantage_core.task_runner import first_closure_turn, run_contract_into_store
 from vantage_core.trust import assess_task_run_trust, closure_ok
 
 
@@ -114,6 +115,22 @@ def run_checkride(
     rubric = score.get("rubric") if isinstance(score.get("rubric"), dict) else {}
     total = int(rubric.get("total_25") or 0)
     out_of_10 = round((total / 25) * 10, 1) if total else 0.0
+    elapsed = round(time.monotonic() - t0, 1)
+    ms = [int(v) for v in (run.get("agent_turn_latency_ms") or []) if isinstance(v, (int, float))]
+    closed_at = first_closure_turn(contract, [
+        str(e.get("content") or "").strip()
+        for e in (run.get("events") or [])
+        if isinstance(e, dict)
+        and e.get("kind") == "sim"
+        and e.get("role") in ("pm", "salesops", "sales_rep", "assistant")
+        and str(e.get("content") or "").strip()
+    ])
+    latency = derive_latency(
+        agent_turn_latency_ms=ms,
+        turns_to_closure=closed_at,
+        elapsed_s=elapsed,
+    )
+    est, usd_source, tokens = resolve_run_cost(run)
     gate = build_pass_gate_numeric(
         out_of_10=out_of_10,
         fail_under=bar,
@@ -121,8 +138,11 @@ def run_checkride(
         trust_level=str(trust.get("trust_level") or "unknown"),
         closure_ok=closure_ok(run),
         error=run.get("error"),
+        est_usd=est,
+        cost_ceiling_usd=contract.cost_ceiling_usd,
+        turn_latency_p95_ms=latency.get("turn_latency_p95_ms"),
+        latency_ceiling_p95_ms=contract.latency_ceiling_p95_ms,
     )
-    est = estimate_run_cost_usd(run)
 
     if bind is not None:
         bind_block = bind
@@ -153,9 +173,12 @@ def run_checkride(
             "model_costs_sha256": model_costs_sha256(),
             "git_sha": (bind_block or {}).get("git_sha"),
         },
-        elapsed_s=round(time.monotonic() - t0, 1),
+        elapsed_s=elapsed,
         error=run.get("error"),
         bind=bind_block,
+        usd_source=usd_source,
+        tokens=tokens,
+        latency=latency,
     )
     nested_contract = decision.get("contract") if isinstance(decision.get("contract"), dict) else {}
     nested_contract = dict(nested_contract)

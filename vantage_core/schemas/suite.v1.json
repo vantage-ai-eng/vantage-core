@@ -20,6 +20,9 @@
       "description": "Required when fail_policy is threshold."
     },
     "cost_ceiling_usd": { "type": "number", "minimum": 0 },
+    "latency_ceiling_p95_ms": { "type": "number", "minimum": 0 },
+    "latency_regression_pct": { "type": "number", "minimum": 0 },
+    "cost_regression_pct": { "type": "number", "minimum": 0 },
     "model": { "type": "string" },
     "fail_under": { "type": "number" },
     "paths": {

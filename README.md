@@ -10,8 +10,7 @@ Opik / Braintrust / LangSmith experiment or trace UI. Observability inspects; Va
 Ingest from their telemetry/exports (`ingest` → path plans + optional drafts); plug into CI;
 return the verdict.
 
-**Version:** 0.1.11 — try `demo --save` with no API key, then open the HTML memo
-(`vantage-core report … --html`) · 0.1.10 attestation · 0.1.8 CI HTML/PDF artifact · 0.1.7 still-trust CI.
+**Version:** 0.1.12 — metered cost + agent-turn latency as opt-in gate inputs · 0.1.11 verify recomputes suite hash
 
 Partner authoring: [CI · your suite](https://www.vantageai.cc/runtimeai/method/cicd#rai-cicd-custom-fixtures)
 
@@ -348,6 +347,14 @@ vantage-core ingest examples/ingest/langsmith_export_sample.json \
 
 Then edit drafts → `suite run` / `suite rerun --baseline`.
 **Claim:** export/manual complement; drafts are suggestions until they own them.
+
+## Changelog (0.1.12)
+
+- **Metered cost** — when the provider returns usage, `usd.source` is `metered` and token classes (input, output, cached read, cache write, reasoning) are recorded separately. No usage → `estimated` (`calls × (1500 in + 350 out) ×` the pinned rate table). `config_stamp.model_costs_sha256` still pins the table.
+- **Agent-turn latency** — `latency.agent_turn_latency_ms[]` is request→response per agent turn. `elapsed_s` stays wall-clock. `harness_overhead_s` is the rest. `turns_to_closure` is **null** if the scenario never closed — never the turn cap. Gate on `turn_latency_p95_ms`, not the mean.
+- **Opt-in ceilings** — path-level `cost_ceiling_usd` and `latency_ceiling_p95_ms` on `runtimeai.contract/v1`; suite-level `latency_ceiling_p95_ms` plus existing `cost_ceiling_usd`. **No defaults.** Absent does not gate. Present breach is `over_cost_ceiling` / `over_latency_ceiling`.
+- **Opt-in regression** — suite `latency_regression_pct` / `cost_regression_pct` vs last-ship baseline. No default. Compare always reports p95 and USD deltas.
+- **Library scorer identity** — `library:…` contracts bind `scorer_sha256` (module body) into `content_sha256` / the suite bar. A later wheel cannot silently change the heuristic under the same hash.
 
 ## Changelog (0.1.11)
 

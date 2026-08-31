@@ -81,7 +81,18 @@
       "type": "object",
       "required": ["est_eval"],
       "properties": {
-        "est_eval": { "type": ["number", "null"] }
+        "est_eval": { "type": ["number", "null"] },
+        "source": { "type": "string", "enum": ["metered", "estimated"] },
+        "tokens": {
+          "type": "object",
+          "properties": {
+            "input": { "type": "integer", "minimum": 0 },
+            "output": { "type": "integer", "minimum": 0 },
+            "cached_read": { "type": "integer", "minimum": 0 },
+            "cache_write": { "type": "integer", "minimum": 0 },
+            "reasoning": { "type": "integer", "minimum": 0 }
+          }
+        }
       }
     },
     "exit": {
@@ -101,6 +112,21 @@
     },
     "session_id": { "type": "string" },
     "elapsed_s": { "type": ["number", "null"] },
+    "latency": {
+      "type": "object",
+      "description": "Agent-turn latency. elapsed_s remains wall-clock including harness overhead.",
+      "properties": {
+        "agent_turn_latency_ms": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "turns_to_closure": { "type": ["integer", "null"], "minimum": 1 },
+        "harness_overhead_s": { "type": ["number", "null"] },
+        "agent_time_to_closure_s": { "type": ["number", "null"] },
+        "turn_latency_median_ms": { "type": ["number", "null"] },
+        "turn_latency_p95_ms": { "type": ["number", "null"] }
+      }
+    },
     "error": {},
     "bind": {
       "type": "object",

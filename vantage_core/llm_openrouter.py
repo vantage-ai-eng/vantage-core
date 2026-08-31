@@ -5,9 +5,20 @@ from __future__ import annotations
 import os
 import threading
 from queue import Empty, Queue
+from dataclasses import dataclass, field
 from typing import Any
 
+from vantage_core.cost import empty_tokens, parse_token_classes
+
 _TAIL_NUDGE = "Reply with your next in-character message (at least one sentence)."
+
+
+@dataclass
+class LlmTurnResult:
+    """Text plus provider usage for one chat.completion call."""
+
+    text: str
+    tokens: dict[str, int] = field(default_factory=empty_tokens)
 
 
 def openrouter_api_key() -> str | None:
@@ -54,7 +65,24 @@ def _assistant_text(completion: Any) -> str:
         return ""
 
 
-def llm_complete(*, model: str, system: str, messages: list[dict[str, str]]) -> str:
+def _tokens_from_completion(completion: Any) -> dict[str, int]:
+    return parse_token_classes(getattr(completion, "usage", None))
+
+
+def unpack_llm_result(raw: Any) -> LlmTurnResult:
+    """Accept a string (test doubles) or ``LlmTurnResult``."""
+    if isinstance(raw, LlmTurnResult):
+        return raw
+    if isinstance(raw, str):
+        return LlmTurnResult(text=raw, tokens=empty_tokens())
+    text = str(getattr(raw, "text", raw) or "")
+    tokens = getattr(raw, "tokens", None)
+    if not isinstance(tokens, dict):
+        tokens = empty_tokens()
+    return LlmTurnResult(text=text, tokens=tokens)
+
+
+def llm_complete(*, model: str, system: str, messages: list[dict[str, str]]) -> LlmTurnResult:
     key = openrouter_api_key()
     if not key:
         raise RuntimeError(
@@ -68,7 +96,7 @@ def llm_complete(*, model: str, system: str, messages: list[dict[str, str]]) -> 
     if not or_messages or str(or_messages[-1].get("role") or "") != "user":
         or_messages.append({"role": "user", "content": _TAIL_NUDGE})
 
-    def _call(*, msgs: list[dict[str, str]], with_temp: bool, max_tokens: int) -> str:
+    def _call(*, msgs: list[dict[str, str]], with_temp: bool, max_tokens: int) -> LlmTurnResult:
         kwargs: dict[str, Any] = {
             "model": or_model,
             "messages": [{"role": "system", "content": system}, *msgs],
@@ -77,24 +105,27 @@ def llm_complete(*, model: str, system: str, messages: list[dict[str, str]]) -> 
         if with_temp:
             kwargs["temperature"] = 0.85
         completion = client.chat.completions.create(**kwargs)
-        return _assistant_text(completion)
+        return LlmTurnResult(
+            text=_assistant_text(completion),
+            tokens=_tokens_from_completion(completion),
+        )
 
     try:
-        text = _call(msgs=or_messages, with_temp=True, max_tokens=800)
+        result = _call(msgs=or_messages, with_temp=True, max_tokens=800)
     except Exception as exc:
         if "temperature" in str(exc).lower():
-            text = _call(msgs=or_messages, with_temp=False, max_tokens=800)
+            result = _call(msgs=or_messages, with_temp=False, max_tokens=800)
         else:
             raise
-    if not text:
+    if not result.text:
         try:
-            text = _call(msgs=or_messages, with_temp=True, max_tokens=256)
+            result = _call(msgs=or_messages, with_temp=True, max_tokens=256)
         except Exception as exc:
             if "temperature" in str(exc).lower():
-                text = _call(msgs=or_messages, with_temp=False, max_tokens=256)
+                result = _call(msgs=or_messages, with_temp=False, max_tokens=256)
             else:
                 raise
-    return text
+    return result
 
 
 def llm_complete_with_timeout(
@@ -104,7 +135,7 @@ def llm_complete_with_timeout(
     messages: list[dict[str, str]],
     timeout_s: float,
     provider: str = "openrouter",  # kept for DI parity; only openrouter supported
-) -> str:
+) -> LlmTurnResult:
     if provider not in ("openrouter", "routellm", ""):
         raise RuntimeError(f"standalone runner only supports openrouter; got {provider!r}")
     q: Queue = Queue(maxsize=1)
@@ -123,4 +154,6 @@ def llm_complete_with_timeout(
         raise TimeoutError(f"LLM call timed out after {timeout_s}s") from exc
     if kind == "err":
         raise payload  # type: ignore[misc]
-    return str(payload)
+    if isinstance(payload, LlmTurnResult):
+        return payload
+    return unpack_llm_result(payload)

@@ -207,7 +207,7 @@ def canonical_suite_definition_from_decision(decision: dict[str, Any]) -> dict[s
         return None
 
     paths.sort(key=_path_bar_sort_key)
-    return {
+    payload: dict[str, Any] = {
         "id": str(suite.get("id") or "").strip(),
         "fail_policy": str(suite.get("fail_policy") or "all_must_pass").strip(),
         "min_passed": _coerce_optional_int(suite.get("min_passed")),
@@ -215,6 +215,11 @@ def canonical_suite_definition_from_decision(decision: dict[str, Any]) -> dict[s
         "fail_under": _coerce_optional_float(suite.get("fail_under")),
         "paths": paths,
     }
+    for key in ("latency_ceiling_p95_ms", "latency_regression_pct", "cost_regression_pct"):
+        val = _coerce_optional_float(suite.get(key))
+        if val is not None:
+            payload[key] = val
+    return payload
 
 
 def recompute_suite_sha256_from_decision(decision: dict[str, Any]) -> str | None:

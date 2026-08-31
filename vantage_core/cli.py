@@ -747,7 +747,8 @@ def _write_starter_suite(suites_dir: Path, *, force: bool) -> Path | None:
         id: team.release_paths_v1
         name: "Release critical paths"
         fail_policy: all_must_pass
-        # cost_ceiling_usd: 0.50
+        # cost_ceiling_usd: 0.50          # omit to not gate
+        # latency_ceiling_p95_ms: 8000    # omit to not gate
         paths:
           - ../contracts/01_refuse_pii.yaml
           - ../contracts/02_cite_sources.yaml

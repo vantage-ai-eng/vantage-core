@@ -80,11 +80,16 @@ def build_pass_gate_numeric(
     trust_level: str = "unknown",
     closure_ok: bool | None = None,
     error: Any = None,
+    est_usd: float | None = None,
+    cost_ceiling_usd: float | None = None,
+    turn_latency_p95_ms: float | None = None,
+    latency_ceiling_p95_ms: float | None = None,
 ) -> dict[str, Any]:
     """Build a pass_gate when the full server gate is unavailable.
 
-    Numeric bar + status only. Prefer server ``_apply_decision_pass_gate`` when
-    running inside the monorepo so trust/closure participate.
+    Numeric bar + status + optional cost/latency ceilings. Absent ceilings
+    never gate. Prefer server ``_apply_decision_pass_gate`` when running
+    inside the monorepo so trust/closure participate.
     """
     blockers: list[str] = []
     score_meets_bar = out_of_10 is not None and float(out_of_10) >= float(fail_under)
@@ -99,6 +104,16 @@ def build_pass_gate_numeric(
     st = str(status or "").strip().lower()
     if st == "error" or error:
         blockers.append("run_error")
+    over_cost = False
+    if cost_ceiling_usd is not None and est_usd is not None:
+        if float(est_usd) > float(cost_ceiling_usd):
+            over_cost = True
+            blockers.append("over_cost_ceiling")
+    over_latency = False
+    if latency_ceiling_p95_ms is not None and turn_latency_p95_ms is not None:
+        if float(turn_latency_p95_ms) > float(latency_ceiling_p95_ms):
+            over_latency = True
+            blockers.append("over_latency_ceiling")
 
     unique: list[str] = []
     for b in blockers:
@@ -111,6 +126,8 @@ def build_pass_gate_numeric(
         and closure_ok is not False
         and st != "error"
         and not error
+        and not over_cost
+        and not over_latency
     )
     if passed:
         headline = (
@@ -218,6 +235,9 @@ def build_decision_object(
     overall_judgement: Any = None,
     generated_at: str | None = None,
     bind: dict[str, Any] | None = None,
+    usd_source: str | None = None,
+    tokens: dict[str, Any] | None = None,
+    latency: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble a runtimeai.decision/v1 object with flat CI aliases.
 
@@ -293,7 +313,6 @@ def build_decision_object(
         "session_id": session_id,
         "elapsed_s": elapsed_s,
         "error": error,
-        # Flat aliases for existing CI / FinOps parsers.
         "scenario_id": scenario_id,
         "model": model,
         "status": status,
@@ -313,6 +332,19 @@ def build_decision_object(
             "Human memo: vantage-core report <file> --html (offline CI artifact; not Cloud history)."
         ),
     }
+    usd_block = decision["usd"]
+    if usd_source in ("metered", "estimated"):
+        usd_block["source"] = usd_source
+    if isinstance(tokens, dict) and any(int(tokens.get(k) or 0) > 0 for k in tokens):
+        usd_block["tokens"] = {
+            "input": int(tokens.get("input") or 0),
+            "output": int(tokens.get("output") or 0),
+            "cached_read": int(tokens.get("cached_read") or 0),
+            "cache_write": int(tokens.get("cache_write") or 0),
+            "reasoning": int(tokens.get("reasoning") or 0),
+        }
+    if latency:
+        decision["latency"] = latency
     if bind_out:
         decision["bind"] = bind_out
     decision["integrity"] = {
@@ -376,6 +408,9 @@ def validate_decision_object(obj: Any) -> list[str]:
     if isinstance(usd, dict):
         if "est_eval" not in usd:
             errors.append("usd.est_eval is required")
+        src = usd.get("source")
+        if src is not None and src not in ("metered", "estimated"):
+            errors.append("usd.source must be metered|estimated when set")
     elif "usd" in obj:
         errors.append("usd must be an object")
 

@@ -285,6 +285,18 @@ dumps):
 * `scorer_kind`, `library_scenario_id`
 * `hard_checks[]`: `id`, `points`, `any_of`, `none_of`, `hard_fail` (the rubric)
 * `fail_under` (the pass threshold)
+* `scorer_sha256` when `scorer_kind` is `library:…` (hash of that scorer module)
+* `cost_ceiling_usd` / `latency_ceiling_p95_ms` **when set** (omitted when absent)
+
+Suite-level `latency_ceiling_p95_ms`, `latency_regression_pct`, and
+`cost_regression_pct` are hashed the same way: present when set, omitted
+when absent. Loosening a ceiling or a regression threshold moves
+`suite_sha256`.
+
+Metered USD (`usd.source: metered`) is recorded token classes × the pinned
+rate table (`config_stamp.model_costs_sha256`). Estimated USD
+(`usd.source: estimated`) is the previous `calls × (1500 in + 350 out) ×`
+rate fallback when the provider returns no usage.
 
 It is **not** a hash of the YAML file. YAML comments, `name`, `turns`,
 `model`, and unknown keys are omitted. Softening `fail_under` or a check's

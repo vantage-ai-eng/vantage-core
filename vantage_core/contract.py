@@ -11,6 +11,38 @@ from typing import Any
 CONTRACT_SCHEMA = "runtimeai.contract/v1"
 
 
+def _optional_nonneg(data: dict[str, Any], key: str, *, label: str) -> float | None:
+    if data.get(key) is None:
+        return None
+    val = float(data[key])
+    if val < 0:
+        raise ValueError(f"{label} must be >= 0")
+    return val
+
+
+def _library_scorer_sha256(scorer_kind: str) -> str | None:
+    """Content hash of the library scorer module body. None for hard_checks."""
+    kind = str(scorer_kind or "").strip()
+    if not kind.startswith("library:"):
+        return None
+    from vantage_core.library import get_scorer
+    import inspect
+
+    fn = get_scorer(kind)
+    if fn is None:
+        return None
+    mod = inspect.getmodule(fn)
+    src = inspect.getsourcefile(mod) if mod is not None else None
+    if src:
+        path = Path(src)
+        if path.is_file():
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+    try:
+        return hashlib.sha256(inspect.getsource(fn).encode("utf-8")).hexdigest()
+    except (OSError, TypeError):
+        return None
+
+
 @dataclass
 class HardCheck:
     id: str
@@ -36,6 +68,8 @@ class ResolvedContract:
     hard_checks: list[HardCheck]
     library_scenario_id: str | None
     source_path: Path | None = None
+    cost_ceiling_usd: float | None = None
+    latency_ceiling_p95_ms: float | None = None
 
     def _content_payload(self) -> dict[str, Any]:
         """Fields hashed by ``content_sha256`` (per-scenario pin).
@@ -44,7 +78,7 @@ class ResolvedContract:
         hard_fail) + scorer identity. Does **not** include ``fail_under``,
         ``name``, ``turns``, ``model``, or YAML comments.
         """
-        return {
+        payload = {
             "id": self.id,
             "mode": self.mode,
             "agent_system": self.agent_system,
@@ -63,6 +97,14 @@ class ResolvedContract:
             ],
             "library_scenario_id": self.library_scenario_id,
         }
+        sha = _library_scorer_sha256(self.scorer_kind)
+        if sha:
+            payload["scorer_sha256"] = sha
+        if self.cost_ceiling_usd is not None:
+            payload["cost_ceiling_usd"] = self.cost_ceiling_usd
+        if self.latency_ceiling_p95_ms is not None:
+            payload["latency_ceiling_p95_ms"] = self.latency_ceiling_p95_ms
+        return payload
 
     def content_sha256(self) -> str:
         """Per-scenario pin: task/prompt + rubric. Does not include fail_under.
@@ -83,9 +125,10 @@ class ResolvedContract:
         """Bar identity for ``suite_content_sha256`` paths.
 
         Same canonical object as ``content_sha256`` plus ``fail_under``
-        (the pass threshold). Same dumps as ``payload_sha256``. Not used as
-        the per-scenario pin — changing this must not invalidate
-        ``content_sha256`` callers.
+        (the pass threshold). Optional ``cost_ceiling_usd`` /
+        ``latency_ceiling_p95_ms`` are included when set so loosening a
+        ceiling moves the suite hash. Library scorers also bind
+        ``scorer_sha256`` (module body). Same dumps as ``payload_sha256``.
         """
         payload = dict(self._content_payload())
         payload["fail_under"] = self.fail_under
@@ -160,6 +203,10 @@ def resolve_contract(data: dict[str, Any], *, source_path: Path | None = None) -
     fail_under = float(data.get("fail_under") if data.get("fail_under") is not None else 7.0)
     turns = max(1, min(24, int(data.get("turns") or 1)))
     model = str(data.get("model") or "").strip() or None
+    cost_ceiling = _optional_nonneg(data, "cost_ceiling_usd", label="contract.cost_ceiling_usd")
+    latency_ceiling = _optional_nonneg(
+        data, "latency_ceiling_p95_ms", label="contract.latency_ceiling_p95_ms"
+    )
 
     from vantage_core.library import get_library_scenario
 
@@ -197,6 +244,8 @@ def resolve_contract(data: dict[str, Any], *, source_path: Path | None = None) -
             hard_checks=[],
             library_scenario_id=lib_id,
             source_path=source_path,
+            cost_ceiling_usd=cost_ceiling,
+            latency_ceiling_p95_ms=latency_ceiling,
         )
 
     # custom
@@ -243,6 +292,8 @@ def resolve_contract(data: dict[str, Any], *, source_path: Path | None = None) -
         hard_checks=hard_checks,
         library_scenario_id=None,
         source_path=source_path,
+        cost_ceiling_usd=cost_ceiling,
+        latency_ceiling_p95_ms=latency_ceiling,
     )
 
 
@@ -290,4 +341,6 @@ def contract_from_library_id(
         hard_checks=[],
         library_scenario_id=scenario_id,
         source_path=None,
+        cost_ceiling_usd=None,
+        latency_ceiling_p95_ms=None,
     )

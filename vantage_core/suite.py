@@ -34,6 +34,9 @@ class ResolvedSuite:
     source_path: Path | None = None
     model: str | None = None
     fail_under: float | None = None
+    latency_ceiling_p95_ms: float | None = None
+    latency_regression_pct: float | None = None
+    cost_regression_pct: float | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
     def resolve_path(self, entry: SuitePath) -> Path:
@@ -117,6 +120,18 @@ def resolve_suite(data: dict[str, Any], *, source_path: Path | None = None) -> R
         if cost_ceiling < 0:
             raise ValueError("suite.cost_ceiling_usd must be >= 0")
 
+    def _opt_nonneg(key: str, label: str) -> float | None:
+        if data.get(key) is None:
+            return None
+        val = float(data[key])
+        if val < 0:
+            raise ValueError(f"{label} must be >= 0")
+        return val
+
+    latency_ceiling = _opt_nonneg("latency_ceiling_p95_ms", "suite.latency_ceiling_p95_ms")
+    latency_regression = _opt_nonneg("latency_regression_pct", "suite.latency_regression_pct")
+    cost_regression = _opt_nonneg("cost_regression_pct", "suite.cost_regression_pct")
+
     paths = _parse_paths(data.get("paths"))
     if fail_policy == "threshold" and min_passed is not None and min_passed > len(paths):
         raise ValueError(
@@ -139,6 +154,9 @@ def resolve_suite(data: dict[str, Any], *, source_path: Path | None = None) -> R
         source_path=source_path,
         model=model,
         fail_under=fail_under,
+        latency_ceiling_p95_ms=latency_ceiling,
+        latency_regression_pct=latency_regression,
+        cost_regression_pct=cost_regression,
         raw=data,
     )
 
@@ -170,9 +188,11 @@ def canonical_suite_definition(suite: ResolvedSuite) -> dict[str, Any]:
     Excluded: suite ``name``, ``model``, ``source_path``, run results, scores,
     USD, bind, CLI ``reps`` / ``pass_k`` / ``turns`` / timeout. Adding or
     removing a path changes the hash; reordering the same paths does not.
-    Editing a path's bar (prompt, rubric, or ``fail_under``), ``fail_policy``,
-    ``min_passed``, ``cost_ceiling_usd``, suite ``fail_under``, or suite ``id``
-    does too. Suites are allowed to change — the hash is visibility, not a freeze.
+    Editing a path's bar (prompt, rubric, ``fail_under``, or a set ceiling),
+    ``fail_policy``, ``min_passed``, ``cost_ceiling_usd``, suite
+    ``latency_ceiling_p95_ms`` / regression pct when set, suite ``fail_under``,
+    or suite ``id`` does too. Suites are allowed to change — the hash is
+    visibility, not a freeze.
     """
     from vantage_core.contract import load_contract
 
@@ -182,7 +202,7 @@ def canonical_suite_definition(suite: ResolvedSuite) -> dict[str, Any]:
         cid = str(entry.id or contract.id).strip()
         paths.append({"id": cid, "content_sha256": contract.contract_bar_sha256()})
     paths.sort(key=_path_bar_sort_key)
-    return {
+    payload: dict[str, Any] = {
         "id": suite.id,
         "fail_policy": suite.fail_policy,
         "min_passed": suite.min_passed,
@@ -190,6 +210,13 @@ def canonical_suite_definition(suite: ResolvedSuite) -> dict[str, Any]:
         "fail_under": suite.fail_under,
         "paths": paths,
     }
+    if suite.latency_ceiling_p95_ms is not None:
+        payload["latency_ceiling_p95_ms"] = suite.latency_ceiling_p95_ms
+    if suite.latency_regression_pct is not None:
+        payload["latency_regression_pct"] = suite.latency_regression_pct
+    if suite.cost_regression_pct is not None:
+        payload["cost_regression_pct"] = suite.cost_regression_pct
+    return payload
 
 
 def hash_suite_definition_payload(payload: dict[str, Any]) -> str:
@@ -235,6 +262,7 @@ def _aggregate_pass_gate(
     suite: ResolvedSuite,
     path_results: list[dict[str, Any]],
     total_usd: float | None,
+    turn_latency_p95_ms: float | None = None,
 ) -> dict[str, Any]:
     blockers: list[str] = []
     passed_count = sum(1 for p in path_results if p.get("passed"))
@@ -260,13 +288,19 @@ def _aggregate_pass_gate(
             cost_ok = False
             blockers.append("over_cost_ceiling")
 
+    latency_ok = True
+    if suite.latency_ceiling_p95_ms is not None and turn_latency_p95_ms is not None:
+        if float(turn_latency_p95_ms) > float(suite.latency_ceiling_p95_ms):
+            latency_ok = False
+            blockers.append("over_latency_ceiling")
+
     # Dedupe blockers preserving order
     unique: list[str] = []
     for b in blockers:
         if b not in unique:
             unique.append(b)
 
-    passed = bool(paths_ok and cost_ok and n > 0)
+    passed = bool(paths_ok and cost_ok and latency_ok and n > 0)
     scores = [
         float(p["out_of_10"])
         for p in path_results
@@ -291,10 +325,15 @@ def _aggregate_pass_gate(
             + (f", min_passed={suite.min_passed}" if suite.min_passed else "")
             + ")."
         )
-    else:
+    elif not cost_ok:
         headline = (
             f"Suite fail — paths ok but cost ${total_usd:.4f} "
             f"exceeds ceiling ${suite.cost_ceiling_usd:.4f}."
+        )
+    else:
+        headline = (
+            f"Suite fail — p95 turn latency {turn_latency_p95_ms:.0f}ms "
+            f"exceeds ceiling {suite.latency_ceiling_p95_ms:.0f}ms."
         )
 
     return {
@@ -312,6 +351,7 @@ def _aggregate_pass_gate(
         "failed_count": n - passed_count,
         "min_passed": suite.min_passed,
         "cost_ceiling_usd": suite.cost_ceiling_usd,
+        "latency_ceiling_p95_ms": suite.latency_ceiling_p95_ms,
     }
 
 
@@ -323,6 +363,20 @@ def _path_key(p: dict[str, Any]) -> str:
     if path:
         return Path(str(path)).stem
     return "?"
+
+
+def _decision_p95(decision: dict[str, Any]) -> float | None:
+    lat = decision.get("latency") if isinstance(decision.get("latency"), dict) else {}
+    v = lat.get("turn_latency_p95_ms")
+    return float(v) if isinstance(v, (int, float)) else None
+
+
+def _pct_increase(current: Any, baseline: Any) -> float | None:
+    if not isinstance(current, (int, float)) or not isinstance(baseline, (int, float)):
+        return None
+    if float(baseline) == 0:
+        return None
+    return round((float(current) - float(baseline)) / float(baseline) * 100.0, 3)
 
 
 def compare_to_baseline(
@@ -375,6 +429,17 @@ def compare_to_baseline(
             if c_cost is not None and b_cost is not None
             else None
         )
+        c_p95 = c.get("turn_latency_p95_ms")
+        b_p95 = b.get("turn_latency_p95_ms")
+        if not isinstance(c_p95, (int, float)):
+            c_p95 = (c.get("latency") or {}).get("turn_latency_p95_ms") if isinstance(c.get("latency"), dict) else None
+        if not isinstance(b_p95, (int, float)):
+            b_p95 = (b.get("latency") or {}).get("turn_latency_p95_ms") if isinstance(b.get("latency"), dict) else None
+        p95_delta = (
+            round(float(c_p95) - float(b_p95), 3)
+            if isinstance(c_p95, (int, float)) and isinstance(b_p95, (int, float))
+            else None
+        )
         path_rows.append(
             {
                 "contract_id": key,
@@ -383,6 +448,7 @@ def compare_to_baseline(
                 "flip": flip,
                 "score_delta": score_delta,
                 "cost_delta_usd": cost_delta,
+                "latency_p95_delta_ms": p95_delta,
             }
         )
 
@@ -400,6 +466,15 @@ def compare_to_baseline(
         if isinstance(c_cost_t, (int, float)) and isinstance(b_cost_t, (int, float))
         else None
     )
+    c_p95 = _decision_p95(current)
+    b_p95 = _decision_p95(baseline)
+    p95_delta_t = (
+        round(float(c_p95) - float(b_p95), 3)
+        if c_p95 is not None and b_p95 is not None
+        else None
+    )
+    p95_pct = _pct_increase(c_p95, b_p95)
+    cost_pct = _pct_increase(c_cost_t, b_cost_t)
     suite_pass_flip = bool(current.get("passed")) != bool(baseline.get("passed"))
 
     if regressions:
@@ -429,6 +504,7 @@ def compare_to_baseline(
             "passed": bool(baseline.get("passed")),
             "out_of_10": baseline.get("out_of_10"),
             "est_usd": baseline.get("est_usd"),
+            "turn_latency_p95_ms": b_p95,
         },
         "baseline_passed": bool(baseline.get("passed")),
         "current_passed": bool(current.get("passed")),
@@ -439,6 +515,9 @@ def compare_to_baseline(
         "gate_transition": gate_transition,
         "score_delta": score_delta_t,
         "cost_delta_usd": cost_delta_t,
+        "cost_pct": cost_pct,
+        "latency_p95_delta_ms": p95_delta_t,
+        "latency_p95_pct": p95_pct,
         "paths": path_rows,
         "path_flips": path_rows,
         "regressions": regressions,
@@ -450,18 +529,57 @@ def compare_to_baseline(
     return out
 
 
+def apply_regression_gate(decision: dict[str, Any]) -> dict[str, Any]:
+    """Opt-in cost/latency regression vs baseline. No threshold → no gate."""
+    from vantage_core.decision import apply_route_and_exit, payload_sha256
+
+    suite = decision.get("suite") if isinstance(decision.get("suite"), dict) else {}
+    cmp_ = decision.get("compare_to_baseline")
+    if not isinstance(cmp_, dict):
+        return decision
+    extra: list[str] = []
+    lat_lim = suite.get("latency_regression_pct")
+    cost_lim = suite.get("cost_regression_pct")
+    lat_pct = cmp_.get("latency_p95_pct")
+    cost_pct = cmp_.get("cost_pct")
+    if lat_lim is not None and isinstance(lat_pct, (int, float)) and float(lat_pct) > float(lat_lim):
+        extra.append("over_latency_regression")
+    if cost_lim is not None and isinstance(cost_pct, (int, float)) and float(cost_pct) > float(cost_lim):
+        extra.append("over_cost_regression")
+    if not extra:
+        return decision
+    gate = dict(decision.get("pass_gate") or {})
+    blockers = list(gate.get("blockers") or [])
+    for b in extra:
+        if b not in blockers:
+            blockers.append(b)
+    gate["blockers"] = blockers
+    gate["passed"] = False
+    gate["headline"] = (
+        f"Suite fail — regression vs baseline ({', '.join(extra)})."
+    )
+    decision["pass_gate"] = gate
+    if isinstance(decision.get("scorecard"), dict):
+        sc = dict(decision["scorecard"])
+        sc["pass_gate"] = gate
+        decision["scorecard"] = sc
+    decision["passed"] = False
+    return apply_route_and_exit(decision)
+
+
 def attach_baseline_compare(
     decision: dict[str, Any],
     baseline: dict[str, Any],
     *,
     baseline_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Attach compare_to_baseline and re-seal integrity (post-run helper)."""
+    """Attach compare_to_baseline, apply opt-in regression, re-seal."""
     from vantage_core.decision import payload_sha256
 
     decision["compare_to_baseline"] = compare_to_baseline(
         decision, baseline, baseline_path=baseline_path
     )
+    decision = apply_regression_gate(decision)
     decision["integrity"] = {
         "algorithm": "sha256",
         "payload_sha256": payload_sha256(decision),
@@ -514,10 +632,12 @@ def run_suite(
 
     # Multi-rep: run full suite N times; aggregate k-of-n
     from vantage_core.decision import apply_route_and_exit, apply_trigger, payload_sha256
+    from vantage_core.latency import sample_variance
 
     rep_summaries: list[dict[str, Any]] = []
     scores: list[float] = []
     costs: list[float] = []
+    p95s: list[float] = []
     last: dict[str, Any] | None = None
     for i in range(n_reps):
         d = _run_suite_once(
@@ -547,6 +667,9 @@ def run_suite(
             scores.append(float(d["out_of_10"]))
         if isinstance(d.get("est_usd"), (int, float)):
             costs.append(float(d["est_usd"]))
+        p95 = _decision_p95(d)
+        if p95 is not None:
+            p95s.append(p95)
 
     assert last is not None
     pass_count = sum(1 for r in rep_summaries if r["passed"])
@@ -568,6 +691,9 @@ def run_suite(
         "score_max": score_max,
         "score_mean": mean_score,
         "est_usd_total": total_usd,
+        "latency_p95_min": round(min(p95s), 3) if p95s else None,
+        "latency_p95_max": round(max(p95s), 3) if p95s else None,
+        "latency_variance": round(sample_variance(p95s), 6) if len(p95s) >= 2 else None,
         "byok_note": f"BYOK cost scales ~×{n_reps} vs single-run",
     }
     blockers = list(gate.get("blockers") or [])
@@ -691,12 +817,18 @@ def _run_suite_once(
 
         cid = entry.id or str(decision.get("scenario_id") or contract.id)
         bar_sha = contract.contract_bar_sha256()
+        lat = decision.get("latency") if isinstance(decision.get("latency"), dict) else {}
         summary = {
             "path": str(contract_path),
             "contract_id": cid,
             "passed": bool(decision.get("passed")),
             "out_of_10": decision.get("out_of_10"),
             "est_usd": decision.get("est_usd"),
+            "usd_source": (decision.get("usd") or {}).get("source")
+            if isinstance(decision.get("usd"), dict)
+            else None,
+            "turn_latency_p95_ms": lat.get("turn_latency_p95_ms"),
+            "turns_to_closure": lat.get("turns_to_closure"),
             "exit_code": decision.get("exit_code"),
             "session_id": decision.get("session_id"),
             "status": decision.get("status"),
@@ -713,6 +845,26 @@ def _run_suite_once(
         if isinstance(p.get("est_usd"), (int, float))
     ]
     total_usd = round(sum(costs), 6) if costs else None
+    from vantage_core.latency import derive_latency
+
+    all_ms: list[int] = []
+    sources: list[str] = []
+    for d in nested:
+        lat = d.get("latency") if isinstance(d.get("latency"), dict) else {}
+        all_ms.extend(int(x) for x in (lat.get("agent_turn_latency_ms") or []) if isinstance(x, (int, float)))
+        usd = d.get("usd") if isinstance(d.get("usd"), dict) else {}
+        if usd.get("source") in ("metered", "estimated"):
+            sources.append(str(usd["source"]))
+    elapsed = round(time.monotonic() - t0, 1)
+    suite_latency = derive_latency(
+        agent_turn_latency_ms=all_ms,
+        turns_to_closure=None,
+        elapsed_s=elapsed,
+    )
+    suite_p95 = suite_latency.get("turn_latency_p95_ms")
+    usd_source = None
+    if sources:
+        usd_source = "metered" if all(s == "metered" for s in sources) else "estimated"
     scores = [
         float(p["out_of_10"])
         for p in path_results
@@ -721,7 +873,10 @@ def _run_suite_once(
     mean_score = round(sum(scores) / len(scores), 1) if scores else None
 
     gate = _aggregate_pass_gate(
-        suite=suite, path_results=path_results, total_usd=total_usd
+        suite=suite,
+        path_results=path_results,
+        total_usd=total_usd,
+        turn_latency_p95_ms=suite_p95,
     )
     status = "error" if errors and not nested else "ended"
     if errors and nested:
@@ -758,9 +913,11 @@ def _run_suite_once(
             "model_costs_sha256": model_costs_sha256(),
             "git_sha": (bind_block or {}).get("git_sha"),
         },
-        elapsed_s=round(time.monotonic() - t0, 1),
+        elapsed_s=elapsed,
         error="; ".join(errors) if errors else None,
         bind=bind_block,
+        usd_source=usd_source,
+        latency=suite_latency,
     )
 
     decision["suite"] = {
@@ -770,6 +927,9 @@ def _run_suite_once(
         "fail_policy": suite.fail_policy,
         "min_passed": suite.min_passed,
         "cost_ceiling_usd": suite.cost_ceiling_usd,
+        "latency_ceiling_p95_ms": suite.latency_ceiling_p95_ms,
+        "latency_regression_pct": suite.latency_regression_pct,
+        "cost_regression_pct": suite.cost_regression_pct,
         "fail_under": suite.fail_under,
         "suite_sha256": suite_sha,
         "source_path": str(suite.source_path) if suite.source_path else None,
@@ -780,10 +940,9 @@ def _run_suite_once(
     }
     decision["path_decisions"] = nested
     if baseline is not None:
-        decision["compare_to_baseline"] = compare_to_baseline(
+        return attach_baseline_compare(
             decision, baseline, baseline_path=baseline_path
         )
-    # Re-seal integrity after attaching suite blocks (bind already in build).
     from vantage_core.decision import payload_sha256
 
     decision["integrity"] = {
