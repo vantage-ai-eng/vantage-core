@@ -217,7 +217,7 @@ def test_demo_offline_talk_track(capsys):
     code = main(["demo", "--offline"])
     assert code == 0
     out = capsys.readouterr().out
-    assert "60-SECOND DEMO" in out
+    assert "SAVED-EXAMPLE DEMO" in out
     assert "SAY:" in out
     assert "LAST SHIP" in out
     assert "WHAT SHOWS ON THE PR" in out
@@ -226,6 +226,11 @@ def test_demo_offline_talk_track(capsys):
     assert MARKER in out
     assert "report" in out
     assert "--html" in out
+    # F-01: silent miss — mean clears bar; path policy blocks
+    assert "Suite mean still clears the bar" in out
+    assert "7.3" in out and "7.0" in out
+    assert "all_must_pass blocks on the cite path" in out
+    assert "mean 7.3 clears fail_under 7.0" in out
 
 
 def test_demo_offline_save_writes_json_for_report(tmp_path, capsys):
@@ -272,7 +277,7 @@ def test_demo_without_key_runs_talk_track(monkeypatch, capsys):
     code = main(["demo"])
     captured = capsys.readouterr()
     assert code == 0
-    assert "60-SECOND DEMO" in captured.out
+    assert "SAVED-EXAMPLE DEMO" in captured.out
     assert "OPENROUTER_API_KEY" in captured.err
 
 

@@ -34,4 +34,4 @@ latency_ceiling_p95_ms: 8000
 
 ## What this is not
 
-No default ceilings. No pillar rollups, pack catalogs, or GEV in Core. Website and investor copy are unchanged until these rows read SHIPPED and the wheel is on PyPI.
+No default ceilings. No pillar rollups, pack catalogs, or GEV in Core.

@@ -91,6 +91,13 @@ def format_comment(decision: dict[str, Any]) -> str:
             "",
             "Exit is the **current** gate (not “same as last ship”). "
             "`runtimeai.decision/v1` artifact — not a trace UI.",
+            "",
+            "### After a red / blocked check",
+            "1. Download the `runtimeai-decision` artifact (`center.html` + `suite.json`).",
+            "2. Open `center.html` — still-ship Center (what blocks · path register · next).",
+            "3. Fix paths, then re-run the check. **Opening the Center does not unblock merge** — "
+            "exit `0/2/1` still comes from `suite rerun`.",
+            "4. Multiple `suites/*.suite.yaml` → Center shows a **fleet register** (advisory; each suite keeps its own exit).",
         ]
     )
     return "\n".join(lines) + "\n"

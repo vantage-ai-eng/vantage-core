@@ -2,7 +2,8 @@
 
 Write with: vantage-core ci stub github|gitlab
 Not a GitHub App. Partner marks the job as a required check.
-Human memo (HTML/PDF) is a CI artifact in *their* store — not a Cloud dashboard.
+Human memo (HTML/PDF) + still-ship Center are CI artifacts in *their* store —
+not a Cloud dashboard.
 """
 
 from __future__ import annotations
@@ -18,9 +19,9 @@ GITHUB_SUITE_GATE_YAML = """\
 # Weekly schedule: cadence re-decide vs last ship (trigger=cadence).
 # Bind: GITHUB_SHA / PR → decision.bind
 # Comment: bind headline + compare_to_baseline (pull-requests: write)
-# Memo: suite.html (+ suite.pdf) uploaded as artifacts — not a Cloud dashboard.
+# Memo: suite.html (+ suite.pdf) + still-ship Center (center.html) as artifacts — not a Cloud dashboard.
 #
-# Requires vantage-core 0.1.8+  ·  secret: OPENROUTER_API_KEY
+# Requires vantage-core 0.1.13  ·  secret: OPENROUTER_API_KEY
 # First PR after a green default-branch run is when --baseline appears.
 # Cadence does not observe silent same-id drift; it re-decides.
 name: vantage-core suite gate
@@ -92,7 +93,7 @@ jobs:
               --json --save decisions/ --ci-comment | tee decisions/suite.json
           fi
 
-      - name: Human scorecard memo
+      - name: Human scorecard memo + still-ship Center
         if: always()
         continue-on-error: true
         run: |
@@ -100,6 +101,10 @@ jobs:
             vantage-core report decisions/suite.json \\
               --html decisions/suite.html \\
               --pdf decisions/suite.pdf
+            vantage-core center \\
+              --decisions decisions/ \\
+              --decision decisions/suite.json \\
+              --html decisions/center.html
           fi
 
       - name: Upload decision artifact
@@ -111,11 +116,12 @@ jobs:
             decisions/suite.json
             decisions/suite.html
             decisions/suite.pdf
+            decisions/center.html
           if-no-files-found: ignore
 """
 
 GITLAB_SUITE_GATE_YAML = """\
-# vantage-core still-trust suite gate (0.1.8+)
+# vantage-core still-trust suite gate (0.1.13)
 # Include from .gitlab-ci.yml:
 #   include:
 #     - local: .gitlab-ci.vantage-core.yml
@@ -126,7 +132,7 @@ GITLAB_SUITE_GATE_YAML = """\
 # Pipeline schedule: cadence re-decide vs last ship (trigger=cadence).
 # Bind: CI_COMMIT_SHA → decision.bind (source gitlab_ci)
 # Comment: bind + compare_to_baseline via CI_JOB_TOKEN / GITLAB_TOKEN
-# Memo: suite.html (+ suite.pdf) as artifacts — not a Cloud dashboard.
+# Memo: suite.html (+ suite.pdf) + still-ship Center (center.html) as artifacts — not a Cloud dashboard.
 
 stages:
   - gate
@@ -176,6 +182,10 @@ suite-gate:
         vantage-core report decisions/suite.json \\
           --html decisions/suite.html \\
           --pdf decisions/suite.pdf || true
+        vantage-core center \\
+          --decisions decisions/ \\
+          --decision decisions/suite.json \\
+          --html decisions/center.html || true
       fi
   artifacts:
     when: always
@@ -183,6 +193,7 @@ suite-gate:
       - decisions/suite.json
       - decisions/suite.html
       - decisions/suite.pdf
+      - decisions/center.html
     expire_in: 30 days
 """
 
@@ -212,12 +223,9 @@ def stub_body(kind: str) -> str:
 
 
 def write_stub(kind: str, dest: str | Path, *, force: bool = False) -> Path:
-    path = Path(dest).expanduser()
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    path = path.resolve()
+    path = Path(dest).expanduser().resolve()
     if path.exists() and not force:
-        raise FileExistsError(f"{path} exists — pass --force to overwrite")
+        raise FileExistsError(f"refusing to overwrite {path} (pass --force)")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(stub_body(kind), encoding="utf-8")
     return path

@@ -33,7 +33,7 @@
     "pass_gate": {
       "fail_under": 7.0,
       "score_out_of_10": 7.3,
-      "score_meets_bar": false,
+      "score_meets_bar": true,
       "trust_level": "suite",
       "closure_ok": true,
       "blockers": [
@@ -79,7 +79,7 @@
   "pass_gate": {
     "fail_under": 7.0,
     "score_out_of_10": 7.3,
-    "score_meets_bar": false,
+    "score_meets_bar": true,
     "trust_level": "suite",
     "closure_ok": true,
     "blockers": [
@@ -108,7 +108,7 @@
   },
   "integrity": {
     "algorithm": "sha256",
-    "payload_sha256": "65ca68fe3c6fd827d9fad93e77fb1f752e389c7e2e0df0f7b6f9687ddfe615c1"
+    "payload_sha256": "241ffaaebda336ce04b83076d3a849233a7d218cd43a9ded1151c2dcaefee13e"
   },
   "suite": {
     "schema": "runtimeai.suite/v1",

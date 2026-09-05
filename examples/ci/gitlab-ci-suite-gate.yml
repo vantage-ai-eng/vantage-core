@@ -1,4 +1,4 @@
-# vantage-core still-trust suite gate (0.1.8+)
+# vantage-core still-trust suite gate (0.1.13)
 # Include from .gitlab-ci.yml:
 #   include:
 #     - local: .gitlab-ci.vantage-core.yml
@@ -9,7 +9,7 @@
 # Pipeline schedule: cadence re-decide vs last ship (trigger=cadence).
 # Bind: CI_COMMIT_SHA → decision.bind (source gitlab_ci)
 # Comment: bind + compare_to_baseline via CI_JOB_TOKEN / GITLAB_TOKEN
-# Memo: suite.html (+ suite.pdf) as artifacts — not a Cloud dashboard.
+# Memo: suite.html (+ suite.pdf) + still-ship Center (center.html) as artifacts — not a Cloud dashboard.
 
 stages:
   - gate
@@ -59,6 +59,10 @@ suite-gate:
         vantage-core report decisions/suite.json \
           --html decisions/suite.html \
           --pdf decisions/suite.pdf || true
+        vantage-core center \
+          --decisions decisions/ \
+          --decision decisions/suite.json \
+          --html decisions/center.html || true
       fi
   artifacts:
     when: always
@@ -66,4 +70,5 @@ suite-gate:
       - decisions/suite.json
       - decisions/suite.html
       - decisions/suite.pdf
+      - decisions/center.html
     expire_in: 30 days

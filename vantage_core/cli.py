@@ -235,7 +235,7 @@ def cmd_suite_run(args: argparse.Namespace) -> int:
         return 1
 
     _print_decision(decision, as_json=args.json)
-    _maybe_save_decision(decision, getattr(args, "save", None))
+    _maybe_save_decision(decision, getattr(args, "save", None), suite_path=path)
     _maybe_ci_comment(decision, args)
     return _decision_exit_code(decision)
 
@@ -299,7 +299,7 @@ def cmd_suite_rerun(args: argparse.Namespace) -> int:
         return 1
 
     _print_decision(decision, as_json=args.json)
-    _maybe_save_decision(decision, getattr(args, "save", None))
+    _maybe_save_decision(decision, getattr(args, "save", None), suite_path=path)
     _maybe_ci_comment(decision, args)
     # Exit reflects *current* gate — not whether we matched the baseline.
     return _decision_exit_code(decision)
@@ -397,13 +397,80 @@ def _pkg_samples_dir() -> Path:
     return Path(__file__).resolve().parent / "samples"
 
 
-def _maybe_save_decision(decision: dict, save_dir: str | None) -> None:
+def _maybe_save_decision(
+    decision: dict,
+    save_dir: str | None,
+    *,
+    suite_path: str | Path | None = None,
+) -> None:
     if not save_dir:
         return
     from vantage_core.ledger import save_decision
 
     path = save_decision(decision, save_dir)
     print(f"saved  {path}", file=sys.stderr)
+    # Refresh still-ship Center whenever the ledger grows (control surface).
+    try:
+        from vantage_core.center import (
+            build_fleet_register,
+            discover_suite_paths,
+            load_ledger_history,
+            write_center_html,
+        )
+        from vantage_core.suite import load_suite
+
+        save_root = Path(save_dir).expanduser()
+        cwd = Path.cwd()
+        hist = load_ledger_history(save_root, limit=24)
+        suite_obj = None
+        sp: Path | None = None
+        if suite_path is not None:
+            sp = Path(suite_path).expanduser()
+            if not sp.is_absolute():
+                sp = (cwd / sp).resolve()
+        if sp is None:
+            src = ""
+            suite_block = (
+                decision.get("suite") if isinstance(decision.get("suite"), dict) else {}
+            )
+            src = str(suite_block.get("source_path") or "")
+            if src:
+                sp = Path(src).expanduser()
+                if not sp.is_absolute():
+                    sp = (cwd / sp).resolve()
+                if not sp.is_file():
+                    sp = None
+        if sp is not None and sp.is_file():
+            try:
+                suite_obj = load_suite(sp)
+            except Exception:
+                suite_obj = None
+
+        fleet = None
+        suite_paths = discover_suite_paths(cwd=cwd)
+        if len(suite_paths) > 1:
+            entries = []
+            for p in suite_paths:
+                try:
+                    entries.append((p, load_suite(p)))
+                except Exception:
+                    continue
+            if len(entries) > 1:
+                fleet = build_fleet_register(entries, history=hist)
+
+        dest = save_root / "center.html"
+        write_center_html(
+            dest,
+            decision=decision,
+            decision_path=path,
+            suite=suite_obj,
+            suite_path=sp,
+            history=hist,
+            fleet=fleet,
+        )
+        print(f"center {dest}", file=sys.stderr)
+    except Exception as exc:
+        print(f"center skipped: {exc}", file=sys.stderr)
 
 
 def _maybe_ci_comment(decision: dict, args: argparse.Namespace) -> None:
@@ -550,7 +617,7 @@ def _demo_fixture_paths() -> tuple[Path, Path]:
 
 
 def cmd_demo_offline(args: argparse.Namespace) -> int:
-    """60-second talk track from saved before/after — no API key."""
+    """Saved-example talk track from before/after fixtures — no API key."""
     from vantage_core.ci_comment import format_comment
     from vantage_core.ledger import format_decision_human, format_decisions_grid, load_decision
     from vantage_core.suite import compare_to_baseline
@@ -583,7 +650,7 @@ def cmd_demo_offline(args: argparse.Namespace) -> int:
         return 0
 
     print("=" * 64)
-    print("  60-SECOND DEMO  ·  no API key  ·  saved examples")
+    print("  SAVED-EXAMPLE DEMO  ·  no API key  ·  offline")
     print("  Seat: ship / still-trust gate. Not traces.")
     print("=" * 64)
     print()
@@ -600,6 +667,20 @@ def cmd_demo_offline(args: argparse.Namespace) -> int:
     print("--- SIDE BY SIDE ---")
     print(format_decisions_grid([(before_p, before), (after_p, after)]))
     print()
+    after_score = after.get("out_of_10")
+    after_bar = after.get("fail_under")
+    if (
+        isinstance(after_score, (int, float))
+        and isinstance(after_bar, (int, float))
+        and float(after_score) >= float(after_bar)
+        and not after.get("passed")
+    ):
+        print(
+            "SAY:  Suite mean still clears the bar "
+            f"({float(after_score):.1f} ≥ {float(after_bar):.1f}). "
+            "A single-number gate would ship. all_must_pass blocks on the cite path."
+        )
+        print()
     print("SAY:  Cite path failed. Bound to the PR. This is the comment CI posts:")
     print()
     print("--- WHAT SHOWS ON THE PR ---")
@@ -613,9 +694,14 @@ def cmd_demo_offline(args: argparse.Namespace) -> int:
     print("  export OPENROUTER_API_KEY=sk-or-...")
     print("  vantage-core demo --live")
     print()
+    print("Interactive Center (browser control surface):")
+    print("  vantage-core demo --interactive")
+    print()
     print("Human memo (offline, no account):")
     print("  vantage-core demo --save decisions/")
     print("  vantage-core report \"$(vantage-core decisions latest)\" --html decisions/suite.html")
+    print("Still-ship Center (management lens, offline):")
+    print("  vantage-core center --decisions decisions/ --html decisions/center.html")
     print("=" * 64)
     return 0
 
@@ -639,14 +725,60 @@ def _maybe_save_offline_demo(
     print(f"saved  {p1}", file=sys.stderr)
     print(f"saved  {p2}", file=sys.stderr)
     dest_html = Path(save_dir).expanduser() / "suite.html"
+    dest_center = Path(save_dir).expanduser() / "center.html"
     print(
         f"next   vantage-core report {p2} --html {dest_html}",
+        file=sys.stderr,
+    )
+    # Still-ship Center (management lens) — same offline fixtures; both memo + center.
+    try:
+        from vantage_core.center import write_center_html
+
+        samples = _pkg_samples_dir()
+        suite_path = samples / "demo.suite.yaml"
+        suite = None
+        if suite_path.is_file():
+            from vantage_core.suite import load_suite
+
+            suite = load_suite(suite_path)
+        write_center_html(
+            dest_center,
+            decision=after_saved,
+            decision_path=p2,
+            suite=suite,
+            suite_path=suite_path if suite_path.is_file() else None,
+        )
+        print(f"center {dest_center}", file=sys.stderr)
+        print(
+            f"next   open {dest_center}  # still-ship Center (management)",
+            file=sys.stderr,
+        )
+        print(
+            "hint   With multiple suites/*.suite.yaml, center shows a fleet register.",
+            file=sys.stderr,
+        )
+    except Exception as exc:
+        print(f"center skipped: {exc}", file=sys.stderr)
+    print(
+        f"next   vantage-core center --decisions {save_dir} --html {dest_center}",
         file=sys.stderr,
     )
 
 
 def cmd_demo(args: argparse.Namespace) -> int:
     """Run the bundled Acme sample suite, or the no-key talk track."""
+    if bool(getattr(args, "interactive", False)):
+        from vantage_core.center_demo import run_interactive
+
+        port = int(getattr(args, "port", 8767) or 8767)
+        out = getattr(args, "demo_out", None) or "/tmp/vantage-center-demo"
+        run_interactive(
+            out=out,
+            port=port,
+            open_browser=not bool(getattr(args, "no_open", False)),
+        )
+        return 0
+
     _load_env()
     from vantage_core.llm_openrouter import openrouter_api_key
     from vantage_core.suite import load_suite, run_suite, validate_suite_files
@@ -658,10 +790,14 @@ def cmd_demo(args: argparse.Namespace) -> int:
     if force_offline or (not force_live and not has_key):
         if not force_offline and not has_key:
             print(
-                "No OPENROUTER_API_KEY — showing the 60-second talk track (saved examples).",
+                "No OPENROUTER_API_KEY — showing the saved-example talk track (offline).",
                 file=sys.stderr,
             )
             print("Live sample: export OPENROUTER_API_KEY=sk-or-... && vantage-core demo --live", file=sys.stderr)
+            print(
+                "Interactive Center: vantage-core demo --interactive",
+                file=sys.stderr,
+            )
             print(file=sys.stderr)
         return cmd_demo_offline(args)
 
@@ -700,13 +836,14 @@ def cmd_demo(args: argparse.Namespace) -> int:
         return 1
 
     _print_decision(decision, as_json=args.json)
-    _maybe_save_decision(decision, getattr(args, "save", None))
+    _maybe_save_decision(decision, getattr(args, "save", None), suite_path=suite_path)
     if not args.json:
         print()
         print("Next (still-trust on every PR):")
         print("  vantage-core ci stub github")
         print("  vantage-core init            # then edit contracts/ — we don't write your suite")
         print("  vantage-core suite rerun suites/starter.suite.yaml --baseline latest --save decisions/")
+        print("  vantage-core center --decisions decisions/ --html decisions/center.html")
     return _decision_exit_code(decision)
 
 
@@ -1136,6 +1273,159 @@ def cmd_yamls(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_center(args: argparse.Namespace) -> int:
+    """Render the still-ship Center — local HTML lens over suite(s) + ledger."""
+    from vantage_core.center import (
+        _decision_suite_id,
+        build_fleet_register,
+        discover_ingest_path,
+        discover_suite_path,
+        discover_suite_paths,
+        load_ingest_json,
+        load_ledger_history,
+        pick_focus_suite_id,
+        write_center_html,
+    )
+    from vantage_core.ledger import latest_decision_path, load_decision
+    from vantage_core.suite import load_suite
+
+    cwd = Path.cwd()
+    decisions_dir = Path(getattr(args, "decisions", None) or "decisions").expanduser()
+    if not decisions_dir.is_absolute():
+        decisions_dir = (cwd / decisions_dir).resolve()
+
+    decision = None
+    decision_path = None
+    explicit_decision = getattr(args, "decision", None)
+    if explicit_decision:
+        decision_path = Path(explicit_decision).expanduser()
+        if not decision_path.is_absolute():
+            decision_path = (cwd / decision_path).resolve()
+        try:
+            decision = load_decision(decision_path)
+        except Exception as exc:
+            print(f"failed to read decision: {exc}", file=sys.stderr)
+            return 2
+    else:
+        decision_path = latest_decision_path(decisions_dir)
+        if decision_path is not None:
+            try:
+                decision = load_decision(decision_path)
+            except Exception as exc:
+                print(f"failed to read decision: {exc}", file=sys.stderr)
+                return 2
+
+    history = []
+    if decisions_dir.is_dir():
+        history = load_ledger_history(
+            decisions_dir, limit=int(getattr(args, "history", 24) or 24)
+        )
+
+    explicit_suite = getattr(args, "suite", None)
+    fleet = None
+    suite = None
+    suite_path: Path | None = None
+
+    if explicit_suite:
+        # Deep cockpit for one suite (CI gate path) — no fleet register.
+        suite_path = discover_suite_path(explicit_suite, cwd=cwd)
+        if suite_path is None:
+            print(f"suite not found: {explicit_suite}", file=sys.stderr)
+            return 2
+        try:
+            suite = load_suite(suite_path)
+        except Exception as exc:
+            print(f"failed to load suite: {exc}", file=sys.stderr)
+            return 2
+    else:
+        suite_paths = discover_suite_paths(cwd=cwd)
+        if not suite_paths:
+            suite_path = discover_suite_path(None, cwd=cwd)
+            suite_paths = [suite_path] if suite_path else []
+        entries: list[tuple[Path, Any]] = []
+        for sp in suite_paths:
+            try:
+                entries.append((sp, load_suite(sp)))
+            except Exception as exc:
+                print(f"skip suite {sp}: {exc}", file=sys.stderr)
+        if len(entries) > 1:
+            fleet = build_fleet_register(entries, history=history)
+            preferred = _decision_suite_id(decision) if decision else None
+            focus_id = pick_focus_suite_id(fleet, preferred=preferred or None)
+            for sp, sobj in entries:
+                if str(getattr(sobj, "id", None) or "") == focus_id:
+                    suite_path, suite = sp, sobj
+                    break
+            if suite is None and entries:
+                suite_path, suite = entries[0]
+            # Prefer the latest decision for the focused suite when no --decision.
+            if not explicit_decision and fleet and focus_id:
+                for row in fleet.get("rows") or []:
+                    if row.get("suite_id") == focus_id and row.get("decision_path"):
+                        try:
+                            decision_path = Path(str(row["decision_path"]))
+                            decision = load_decision(decision_path)
+                        except Exception:
+                            pass
+                        break
+        elif len(entries) == 1:
+            suite_path, suite = entries[0]
+        elif decision is None:
+            print(
+                "center needs a suite (--suite or suites/*.suite.yaml) "
+                "or decisions/ with runtimeai.decision/v1 JSON",
+                file=sys.stderr,
+            )
+            return 2
+
+    ingest_payload = None
+    ingest_path = discover_ingest_path(
+        getattr(args, "ingest", None),
+        decisions_dir=decisions_dir,
+        cwd=cwd,
+    )
+    if ingest_path is not None:
+        try:
+            ingest_payload = load_ingest_json(ingest_path)
+        except Exception as exc:
+            print(f"failed to read ingest: {exc}", file=sys.stderr)
+            return 2
+
+    html_out = getattr(args, "html", None) or str(decisions_dir / "center.html")
+    dest = Path(html_out).expanduser()
+    if not dest.is_absolute():
+        dest = (cwd / dest).resolve()
+
+    try:
+        write_center_html(
+            dest,
+            decision=decision,
+            decision_path=decision_path,
+            suite=suite,
+            suite_path=suite_path,
+            ingest=ingest_payload,
+            ingest_path=ingest_path,
+            history=history,
+            fleet=fleet,
+        )
+        print(f"center  {dest}", file=sys.stderr)
+        if fleet and (fleet.get("suite_count") or 0) > 1:
+            print(f"fleet   {fleet.get('headline')}", file=sys.stderr)
+    except Exception as exc:
+        print(f"vantage-core center failed: {exc}", file=sys.stderr)
+        return 1
+
+    if getattr(args, "open", False):
+        try:
+            import webbrowser
+
+            webbrowser.open(dest.as_uri())
+        except Exception as exc:
+            print(f"open failed: {exc}", file=sys.stderr)
+
+    return 0
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     """Render a self-contained HTML/PDF scorecard from decision JSON (offline)."""
     from vantage_core.decision import validate_decision_object
@@ -1443,7 +1733,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     demo_p = sub.add_parser(
         "demo",
-        help="60s talk track (no key) or live Acme sample suite (--live)",
+        help="saved-example talk track (no key, offline) or live Acme sample suite (--live)",
     )
     demo_p.add_argument(
         "--offline",
@@ -1454,6 +1744,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--live",
         action="store_true",
         help="Run the bundled Acme sample suite (needs OPENROUTER_API_KEY)",
+    )
+    demo_p.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Browser walkthrough: run beats and watch the still-ship Center update",
+    )
+    demo_p.add_argument(
+        "--port",
+        type=int,
+        default=8767,
+        help="Port for --interactive (default 8767)",
+    )
+    demo_p.add_argument(
+        "--demo-out",
+        default="/tmp/vantage-center-demo",
+        help="Workdir for --interactive decisions/ + center.html",
+    )
+    demo_p.add_argument(
+        "--no-open",
+        action="store_true",
+        help="With --interactive, do not open a browser tab",
     )
     demo_p.add_argument("--model", default=None)
     demo_p.add_argument("--fail-under", type=float, default=None)
@@ -1546,11 +1857,14 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_p = sub.add_parser(
         "ingest",
         help=(
-            "Complement intake: analyze LangSmith-shaped export → ranked path plans "
-            "+ optional contract drafts (not a trace UI, not OAuth)"
+            "Complement intake: LangSmith / Braintrust / similar JSON export → "
+            "ranked path plans + optional contract drafts (not OAuth)"
         ),
     )
-    ingest_p.add_argument("export", help="Path to export JSON (e.g. LangSmith runs dump)")
+    ingest_p.add_argument(
+        "export",
+        help="Path to export JSON (LangSmith runs, Braintrust events, or similar)",
+    )
     ingest_p.add_argument(
         "--suggest-paths",
         action="store_true",
@@ -1635,6 +1949,57 @@ def build_parser() -> argparse.ArgumentParser:
         help="Overwrite if the destination exists",
     )
     ci_stub.set_defaults(func=cmd_ci_stub)
+
+    center_p = sub.add_parser(
+        "center",
+        help=(
+            "Still-ship Center — local HTML lens over suite + latest decision + "
+            "path blockers + bind (offline; not a hosted dashboard)"
+        ),
+    )
+    center_p.add_argument(
+        "--suite",
+        metavar="PATH",
+        default=None,
+        help="Suite YAML (default: ./suites/*.suite.yaml or samples/demo.suite.yaml)",
+    )
+    center_p.add_argument(
+        "--decisions",
+        metavar="DIR",
+        default="decisions",
+        help="Decisions ledger directory (default: ./decisions)",
+    )
+    center_p.add_argument(
+        "--decision",
+        metavar="PATH",
+        default=None,
+        help="Specific decision JSON (default: newest in --decisions)",
+    )
+    center_p.add_argument(
+        "--ingest",
+        metavar="PATH",
+        default=None,
+        help="Ingest analysis JSON (or auto-pick decisions/ingest-*.json if present)",
+    )
+    center_p.add_argument(
+        "--html",
+        metavar="PATH",
+        default=None,
+        help="Write Center HTML (default: decisions/center.html)",
+    )
+    center_p.add_argument(
+        "--history",
+        metavar="N",
+        type=int,
+        default=24,
+        help="Max dated decisions to show in history (default: 24)",
+    )
+    center_p.add_argument(
+        "--open",
+        action="store_true",
+        help="Open the Center HTML in the default browser",
+    )
+    center_p.set_defaults(func=cmd_center)
 
     report_p = sub.add_parser(
         "report",

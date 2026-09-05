@@ -25,15 +25,37 @@ def load_export(path: str | Path) -> Any:
 
 
 def _iter_runs(data: Any) -> list[dict[str, Any]]:
+    """Collect run-like dicts from LangSmith / Braintrust / similar export shapes."""
     if isinstance(data, list):
         return [x for x in data if isinstance(x, dict)]
     if not isinstance(data, dict):
         return []
-    for key in ("runs", "trace_runs", "items", "events", "data", "results"):
+    # LangSmith: runs · Braintrust UI/API: events / rows / records · generic: items/data/results
+    for key in (
+        "runs",
+        "trace_runs",
+        "events",
+        "rows",
+        "records",
+        "items",
+        "data",
+        "results",
+    ):
         val = data.get(key)
         if isinstance(val, list):
             return [x for x in val if isinstance(x, dict)]
-    if any(k in data for k in ("name", "inputs", "outputs", "error", "run_type")):
+    if any(
+        k in data
+        for k in (
+            "name",
+            "inputs",
+            "outputs",
+            "input",
+            "output",
+            "error",
+            "run_type",
+        )
+    ):
         return [data]
     return []
 
@@ -79,22 +101,45 @@ def _messages_text(payload: Any, *, roles: set[str] | None = None) -> str:
 
 
 def extract_run(run: dict[str, Any]) -> dict[str, Any]:
-    """Normalize one export run into structured evidence."""
-    user = _messages_text(run.get("inputs"), roles={"user", "human"})
+    """Normalize one export run into structured evidence.
+
+    LangSmith often nests under ``inputs`` / ``outputs`` (messages).
+    Braintrust experiment/dataset rows commonly use top-level ``input`` / ``output``
+    (string or object). Both are accepted.
+    """
+    inputs = run.get("inputs") if run.get("inputs") is not None else run.get("input")
+    outputs = run.get("outputs") if run.get("outputs") is not None else run.get("output")
+    # Braintrust expected / scores can hint failure without an error string
+    scores = run.get("scores") if isinstance(run.get("scores"), dict) else {}
+
+    user = _messages_text(inputs, roles={"user", "human"})
     if not user:
-        user = _messages_text(run.get("inputs"))
-    assistant = _messages_text(run.get("outputs"), roles={"assistant", "ai"})
+        user = _messages_text(inputs)
+    assistant = _messages_text(outputs, roles={"assistant", "ai"})
     if not assistant:
-        assistant = _messages_text(run.get("outputs"))
+        assistant = _messages_text(outputs)
     error = _as_text(run.get("error"))
     tags = [str(t).lower() for t in (run.get("tags") or []) if t is not None]
+    meta = run.get("metadata") if isinstance(run.get("metadata"), dict) else {}
+    for t in meta.get("tags") or []:
+        if t is not None:
+            tags.append(str(t).lower())
     status = str(run.get("status") or "").lower()
-    name = str(run.get("name") or run.get("id") or "run")
+    name = str(run.get("name") or run.get("span_id") or run.get("id") or "run")
     failed = status in ("error", "failed", "failure") or bool(error.strip())
+    # Low experiment scores (Braintrust) — treat as failure-shaped for ranking
+    if not failed and scores:
+        try:
+            vals = [float(v) for v in scores.values() if isinstance(v, (int, float))]
+            if vals and max(vals) < 0.5:
+                failed = True
+        except (TypeError, ValueError):
+            pass
+    span_attrs = run.get("span_attributes") if isinstance(run.get("span_attributes"), dict) else {}
     return {
         "id": str(run.get("id") or name),
         "name": name,
-        "run_type": str(run.get("run_type") or ""),
+        "run_type": str(run.get("run_type") or span_attrs.get("name") or ""),
         "status": status,
         "failed": failed,
         "user": user.strip(),
@@ -302,8 +347,8 @@ def analyze_export(data: Any, *, limit: int = 5) -> dict[str, Any]:
         "suggestions": suggestions,
         "coverage_gaps": gaps[:3],
         "claim": (
-            "export/manual complement — drafts are suggestions; partner owns the suite; "
-            "not OAuth; not a trace UI"
+            "export/manual complement (LangSmith, Braintrust, or similar shape) — "
+            "drafts are suggestions; partner owns the suite; not OAuth; not a trace UI"
         ),
         "method": "extract→prior-detectors→rank→draft",
     }
@@ -416,7 +461,9 @@ def format_suggestions(
     lines.append("method   extract → prior detectors → rank → optional drafts")
     if not suggestions:
         lines.append("No path suggestions — export empty or unrecognized shape.")
-        lines.append('Hint: LangSmith-shaped JSON with a top-level "runs" array.')
+        lines.append(
+            'Hint: LangSmith (`runs`) or Braintrust (`events` / rows with `input`+`output`) JSON.'
+        )
         return "\n".join(lines)
 
     lines.append(
@@ -463,7 +510,7 @@ def format_suggestions(
     )
     lines.append("")
     lines.append(
-        "Claim: export/manual complement — drafts are suggestions; "
-        "partner owns the suite; not LangSmith OAuth; not a hosted history UI."
+        "Claim: export/manual complement (LangSmith, Braintrust, or similar shape) — "
+        "drafts are suggestions; partner owns the suite; not OAuth; not a hosted history UI."
     )
     return "\n".join(lines)

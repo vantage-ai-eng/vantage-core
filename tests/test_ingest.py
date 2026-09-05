@@ -75,7 +75,20 @@ def test_format_mentions_method_and_claim():
     assert "prior detectors" in text
     assert "approach:" in text
     assert "partner owns the suite" in text
-    assert "not LangSmith OAuth" in text
+    assert "not OAuth" in text or "not LangSmith OAuth" in text
+
+
+def test_braintrust_shaped_export_ranks():
+    fixture = ROOT / "examples" / "ingest" / "braintrust_export_sample.json"
+    data = load_export(fixture)
+    report = analyze_export(data)
+    assert report["run_count"] == 4
+    slugs = {s["slug"] for s in report["suggestions"]}
+    assert "refuse_pii" in slugs
+    assert "cite_sources" in slugs
+    assert "escalate_not_guess" in slugs
+    assert "sql_safety" in slugs
+    assert "Braintrust" in report["claim"] or "similar shape" in report["claim"]
 
 
 def test_cli_ingest_json_and_drafts(capsys, tmp_path: Path):

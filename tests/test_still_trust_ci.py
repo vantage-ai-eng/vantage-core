@@ -133,6 +133,9 @@ def test_format_comment_includes_bind_and_compare():
     assert "vs last ship" in text
     assert "acme_cite_sources_v1" in text
     assert "exit" in text
+    assert "center.html" in text
+    assert "does not unblock" in text.lower()
+    assert "fleet register" in text.lower()
 
 
 def test_ci_comment_file(tmp_path):

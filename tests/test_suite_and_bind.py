@@ -403,6 +403,36 @@ def test_suite_cost_ceiling_blocks_when_over():
     assert "over_cost_ceiling" in gate["blockers"]
 
 
+def test_suite_score_meets_bar_independent_of_path_policy():
+    """F-02: mean vs fail_under is not the same bit as aggregate passed."""
+    from vantage_core.suite import ResolvedSuite, SuitePath, _aggregate_pass_gate
+
+    suite = ResolvedSuite(
+        schema=SUITE_SCHEMA,
+        id="silent",
+        name="silent",
+        fail_policy="all_must_pass",
+        min_passed=None,
+        cost_ceiling_usd=None,
+        fail_under=7.0,
+        paths=[
+            SuitePath(path=Path("a.yaml")),
+            SuitePath(path=Path("b.yaml")),
+            SuitePath(path=Path("c.yaml")),
+        ],
+    )
+    path_results = [
+        {"path": "a.yaml", "contract_id": "refuse", "passed": True, "out_of_10": 10.0},
+        {"path": "b.yaml", "contract_id": "cite", "passed": False, "out_of_10": 4.0},
+        {"path": "c.yaml", "contract_id": "escalate", "passed": True, "out_of_10": 8.0},
+    ]
+    gate = _aggregate_pass_gate(suite=suite, path_results=path_results, total_usd=0.001)
+    assert gate["score_out_of_10"] == 7.3
+    assert gate["score_meets_bar"] is True
+    assert gate["passed"] is False
+    assert "path_failed" in gate["blockers"]
+
+
 def test_bind_from_github_env(monkeypatch):
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("GITHUB_SHA", "abcdef0123456789abcdef0123456789abcdef01")

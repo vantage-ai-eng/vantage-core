@@ -307,6 +307,11 @@ def _aggregate_pass_gate(
         if isinstance(p.get("out_of_10"), (int, float))
     ]
     mean_score = round(sum(scores) / len(scores), 1) if scores else None
+    # Mean vs fail_under — independent of policy / cost / latency blockers.
+    # A suite can clear the numeric bar and still fail all_must_pass.
+    # Suite YAML may omit fail_under; match run_suite's default bar of 7.0.
+    bar = float(suite.fail_under) if suite.fail_under is not None else 7.0
+    score_meets_bar = mean_score is not None and float(mean_score) >= bar
 
     if passed:
         headline = (
@@ -337,9 +342,9 @@ def _aggregate_pass_gate(
         )
 
     return {
-        "fail_under": suite.fail_under,
+        "fail_under": bar,
         "score_out_of_10": mean_score,
-        "score_meets_bar": passed,  # suite-level: aggregate gate
+        "score_meets_bar": bool(score_meets_bar),
         "trust_level": "suite",
         "closure_ok": True,
         "blockers": unique,
@@ -682,7 +687,12 @@ def run_suite(
     gate = dict(last.get("pass_gate") or {})
     gate["passed"] = aggregate_passed
     gate["score_out_of_10"] = mean_score
-    gate["score_meets_bar"] = aggregate_passed
+    fail_under = gate.get("fail_under")
+    if fail_under is None:
+        fail_under = (last.get("fail_under") if last else None) or 0.0
+    gate["score_meets_bar"] = mean_score is not None and float(mean_score) >= float(
+        fail_under
+    )
     gate["reps"] = {
         "reps": n_reps,
         "pass_k": k,

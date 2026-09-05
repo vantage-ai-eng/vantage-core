@@ -161,6 +161,20 @@ def format_decision_human(decision: dict[str, Any], *, path: Path | None = None)
     gate = decision.get("pass_gate") if isinstance(decision.get("pass_gate"), dict) else {}
     if gate.get("headline"):
         lines.append(f"gate     {gate['headline']}")
+    # Surface silent-miss: mean clears fail_under while policy still blocks.
+    score = decision.get("out_of_10")
+    bar = gate.get("fail_under", decision.get("fail_under"))
+    if (
+        isinstance(score, (int, float))
+        and isinstance(bar, (int, float))
+        and float(score) >= float(bar)
+        and not decision.get("passed")
+        and gate.get("score_meets_bar") is True
+    ):
+        lines.append(
+            f"note     mean {float(score):.1f} clears fail_under {float(bar):.1f}; "
+            "suite blocked on path policy"
+        )
 
     bind = decision.get("bind") if isinstance(decision.get("bind"), dict) else None
     if bind and bind.get("headline"):

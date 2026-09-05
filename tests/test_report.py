@@ -133,6 +133,8 @@ def test_ci_stub_emits_report_html_artifact():
         assert "--ci-comment" in text
         assert "vantage-core>=0.1.8" in text
         assert "Cloud dashboard" in text
+        assert "vantage-core center" in text
+        assert "decisions/center.html" in text
     assert "upload-artifact" in gh
     assert "continue-on-error: true" in gh
     assert "after_script" in gl

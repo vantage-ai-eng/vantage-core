@@ -10,7 +10,7 @@ Opik / Braintrust / LangSmith experiment or trace UI. Observability inspects; Va
 Ingest from their telemetry/exports (`ingest` → path plans + optional drafts); plug into CI;
 return the verdict.
 
-**Version:** 0.1.12 — metered cost + agent-turn latency as opt-in gate inputs · 0.1.11 verify recomputes suite hash
+**Version:** 0.1.13 — still-ship Center (cockpit) + fleet register · 0.1.12 metered cost/latency ceilings
 
 Partner authoring: [CI · your suite](https://www.vantageai.cc/runtimeai/method/cicd#rai-cicd-custom-fixtures)
 
@@ -35,15 +35,25 @@ Requires `OPENROUTER_API_KEY` (BYOK) for live model runs. Live runs fail loudly 
 
 ## Stranger path (under 30 min)
 
-**A — 60-second demo (no API key, no editing)**
+**A — Saved-example demo (no API key, offline, no editing)**
 
 ```bash
 vantage-core demo --save decisions/
 vantage-core report "$(vantage-core decisions latest)" --html decisions/suite.html
-# open decisions/suite.html — no RuntimeAI account
+vantage-core center --decisions decisions/ --html decisions/center.html
+# open decisions/center.html — still-ship Center (management); suite.html is the scorecard memo
+# no RuntimeAI account
 ```
 
-Reads the **SAY:** lines out loud. Shows last-ship PASS → after-change BLOCK → the PR comment.
+**Interactive control surface (browser — recommended for demos)**
+
+```bash
+vantage-core demo --interactive
+# → http://127.0.0.1:8767/  · click beats: last ship → after change → fleet
+# Center panel refreshes after each beat (not CLI-only)
+```
+
+Reads the **SAY:** lines out loud. Shows last-ship PASS → after-change BLOCK (mean still clears the bar; path policy blocks) → the PR comment.
 `--save` writes the before/after JSON even without an API key.
 Needs a key only for a live model run: `vantage-core demo --live`.
 
@@ -168,7 +178,7 @@ vantage-core decisions latest                       # path of newest JSON (scrip
 vantage-core decisions show decisions/<file>.json   # human view: score, cost, bind, paths
 ```
 
-This is **not** hosted / multi-tenant history (paid later). Local files + `bind` are enough for demos and CI artifacts.
+This is **not** hosted / multi-tenant history (not built). Local files + `bind` are enough for demos and CI artifacts.
 
 ## SHA / PR bind
 
@@ -209,15 +219,36 @@ vantage-core report decisions/suite.json --html decisions/suite.html
 vantage-core report decisions/suite.json --pdf decisions/suite.pdf    # optional; no extra deps
 ```
 
-Open the HTML in a browser (or the PDF). Footer states **local artifact — not RuntimeAI Cloud history**. Hosted multi-owner history remains paid.
+Open the HTML in a browser (or the PDF). Footer states **local artifact — not RuntimeAI Cloud history**. Hosted multi-owner history is not built.
+
+## Still-ship Center (management lens)
+
+One local HTML surface for suite · bar · last motion · path blockers · bind — not N scripts, not a hosted dashboard:
+
+```bash
+# Single suite (deep cockpit) — what CI uses for the gated suite
+vantage-core center --suite suites/starter.suite.yaml --decisions decisions/ --html decisions/center.html
+
+# Fleet rollup — discovers suites/*.suite.yaml; advisory register + focused suite detail
+vantage-core center --decisions decisions/ --html decisions/center.html
+# optional: --ingest export-analysis.json   (or auto-pick decisions/ingest-*.json)
+# optional: --open
+```
+
+`suite run` / `suite rerun --save decisions/` also refreshes `decisions/center.html` automatically. CI stubs re-run `center` with `if: always()` so a blocked gate still leaves a readable cockpit.
+
+**Across suites:** each suite keeps its own bar and CI exit (`0/2/1`). The fleet register is advisory (e.g. `2 CLEAR · 1 STOP`) — not a fleet gate. Chain scope remains account + `suite_id`.
+
+**Stranger path (red CI):** download the `runtimeai-decision` artifact → open `center.html` → fix what the path register shows → push and let CI re-decide. Details: [`examples/ci/README.md`](examples/ci/README.md#stranger-path--after-a-red-check).
 
 ```bash
 # After any saved decision (dated file or the CI tee'd suite.json)
 vantage-core decisions latest                    # path of newest JSON
 vantage-core report "$(vantage-core decisions latest)" --html decisions/suite.html
+vantage-core center --decisions decisions/ --html decisions/center.html
 ```
 
-GitHub Actions / GitLab stubs already run `report` with `if: always()` / `after_script` so a blocked gate still leaves a readable memo. Report failure does not change the suite exit code.
+GitHub Actions / GitLab stubs already run `report` + `center` with `if: always()` / `after_script` so a blocked gate still leaves a readable memo and Center. Report/Center failure does not change the suite exit code.
 
 ## Contract format (`runtimeai.contract/v1`)
 
@@ -285,7 +316,7 @@ Detached countersignature (**verify is live**, offline and free; **attest is liv
 
 ```bash
 # after demo --save or suite run --save (dated file, not suite.json)
-export RUNTIMEAI_API_KEY=rai_live_…          # paid issuance; not OPENROUTER_API_KEY
+export RUNTIMEAI_API_KEY=rai_live_…          # issuance (free in preview); not OPENROUTER_API_KEY
 vantage-core attest "$(vantage-core decisions latest)"
 vantage-core verify "$(vantage-core decisions latest)"   # sibling *.attestation.json; no network
 ```
@@ -334,19 +365,44 @@ export TWINE_PASSWORD=pypi-…
 
 ## Complement intake (`ingest`)
 
-Feed a **file export** (LangSmith-shaped JSON). Pipeline: extract evidence → match
-**Vantage risk priors** (detectors on user/assistant/error/tags, not a keyword bag) →
-rank by severity × failure shape → optional **contract drafts** with openings from
-*their* turns. Not a trace UI. Not OAuth. Partner still owns the suite.
+Already on **LangSmith**, **Braintrust**, or similar? Export a JSON dump → one CLI command →
+ranked path suggestions + optional draft contracts.
+
+**Accelerate authoring** = shorter blank-page work (ranked paths + optional drafts from *their*
+turns + Vantage priors). Someone still edits system prompts, hard-checks, IDs, and owns the suite.
+**Auto-write** would mean export in → production suite out with no human ownership — we do **not**
+do that. No live sync (no OAuth).
+
+| | Accelerate (what we ship) | Auto-write (not us) |
+|---|---|---|
+| Output | Suggestions + editable drafts | Finished suite that ships as-is |
+| Who owns the bar | Partner | Tool |
+| Sync | One-shot file import | Live OAuth / continuous sync |
+
+Pipeline: extract evidence → match **Vantage risk priors** (detectors on user/assistant/error/tags,
+not a keyword bag) → rank by severity × failure shape → optional **contract drafts** with openings
+from *their* turns. Not a trace UI. Partner still owns the suite.
 
 ```bash
+# LangSmith-shaped (top-level "runs")
 vantage-core ingest examples/ingest/langsmith_export_sample.json
-vantage-core ingest examples/ingest/langsmith_export_sample.json \
-  --write-drafts ./contracts_drafts --force
+
+# Braintrust-shaped (top-level "events" with input/output)
+vantage-core ingest examples/ingest/braintrust_export_sample.json
+
+vantage-core ingest path/to/export.json --write-drafts ./contracts_drafts --force
 ```
 
 Then edit drafts → `suite run` / `suite rerun --baseline`.
 **Claim:** export/manual complement; drafts are suggestions until they own them.
+See `examples/ingest/README.md`.
+FAQ: https://www.vantageai.cc/runtimeai/faq#rai-faq-accelerate-authoring
+
+## Changelog (0.1.13)
+
+- **Still-ship Center** — `vantage-core center`: local HTML cockpit (ship / still-trust, what blocks, path register with `why` + `priority:`, bar, bind, vs last ship, motion history, author-next). Not a hosted dashboard.
+- **Fleet register** — multiple `suites/*.suite.yaml` → advisory rollup; each suite keeps its own CI exit.
+- **Auto-refresh** — `--save` writes `center.html`; CI stubs upload it; `demo --interactive` browser walkthrough.
 
 ## Changelog (0.1.12)
 
