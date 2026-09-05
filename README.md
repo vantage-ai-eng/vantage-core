@@ -400,9 +400,7 @@ FAQ: https://www.vantageai.cc/runtimeai/faq#rai-faq-accelerate-authoring
 
 ## Changelog (0.1.13)
 
-- **Still-ship Center** — `vantage-core center`: local HTML cockpit (ship / still-trust, what blocks, path register with `why` + `priority:`, bar, bind, vs last ship, motion history, author-next). Not a hosted dashboard.
-- **Fleet register** — multiple `suites/*.suite.yaml` → advisory rollup; each suite keeps its own CI exit.
-- **Auto-refresh** — `--save` writes `center.html`; CI stubs upload it; `demo --interactive` browser walkthrough.
+- **Still-ship Center** — local control surface (`vantage-core center` / `demo --interactive`). CI is the brake; Center is the cockpit: ship / still-trust verdict, what blocks, path register (`why` + `priority:`), bar, bind, vs last ship, motion history, one primary next, author-next ingest panel. Fleet register across `suites/*.suite.yaml` is advisory only. Offline HTML — not a Cloud dashboard. `--save` and CI stubs refresh/upload `center.html`.
 
 ## Changelog (0.1.12)
 

@@ -2,7 +2,22 @@
 
 **Tag:** `vantage-core-v0.1.13`
 
-Still-ship **Center** — the management cockpit over suite + ledger + optional ingest. CI remains the brake; Center is the lens. Fleet register rolls up `suites/*.suite.yaml` without inventing a fleet exit.
+**Still-ship Center** — the local control surface for ship / still-trust.  
+CI remains the brake (`0/2/1`). Center is the cockpit: what is in play, what blocks, what moved, what to do next. Offline HTML artifact — not a Cloud dashboard.
+
+## What's in Center
+
+One screen over suite + local `decisions/` ledger (+ optional ingest plan):
+
+| Surface | What you see |
+|---------|----------------|
+| **Verdict** | Ship and still-trust twin labels · route · what blocks |
+| **Path register** | Every path with optional `why:` and `priority:` (display + sort) · bar · bind |
+| **Memory** | Vs last ship · motion history (last N) · per-path last pass / fail |
+| **Next** | One primary next action · author-next ingest panel (drafts only — you own the bar) |
+| **Fleet register** | When `suites/*.suite.yaml` has more than one suite: advisory rollup (`N CLEAR · K STOP`) and focus on the worst suite |
+
+Fleet never invents a fleet exit. Each suite keeps its own CI gate. Opening Center never unblocks a merge.
 
 ## Try this
 
@@ -19,13 +34,12 @@ vantage-core demo --save decisions/
 vantage-core center --decisions decisions/ --html decisions/center.html --open
 ```
 
-## What changed
+## What changed (plumbing)
 
-- **`vantage-core center`** — local HTML still-ship Center: ship / still-trust twin labels, what blocks, path register (`why` + optional `priority:` display/sort), bar, bind, vs last ship, motion history, author-next ingest panel, one primary next. Offline artifact — not a Cloud dashboard.
-- **Fleet register** — with multiple `suites/*.suite.yaml`, Center shows an advisory surface rollup (`N CLEAR · K STOP`) and focuses the worst suite. Each suite keeps its own CI exit `0/2/1`. Chain scope remains account + `suite_id`.
-- **Control surface refresh** — `suite run` / `suite rerun --save` writes `decisions/center.html`. CI stubs re-run `center` with `if: always()` / `after_script` and upload the artifact. PR comment points strangers at `center.html`.
-- **`vantage-core demo --interactive`** — browser walkthrough: last ship → after change → fleet. Center panel updates after each beat.
+- **`vantage-core center`** — builds the cockpit HTML from suite YAML + ledger (+ optional ingest JSON).
+- **Auto-refresh** — `suite run` / `suite rerun --save` writes `decisions/center.html`. CI stubs re-run `center` with `if: always()` / `after_script` and upload the artifact. PR comment points at `center.html`.
+- **`vantage-core demo --interactive`** — browser walkthrough: last ship → after change → fleet; Center panel updates after each beat.
 
 ## What this is not
 
-No hosted org dashboard. No fleet exit code. No OAuth connectors. Opening Center never unblocks a merge.
+No hosted org dashboard. No fleet exit code. No OAuth connectors. No override of the CI gate.
