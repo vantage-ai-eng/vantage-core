@@ -430,7 +430,7 @@ def test_demo_offline_prints_coverage(capsys):
     out = capsys.readouterr().out
     assert "SAVED-EXAMPLE DEMO" in out
     assert "Mirrors vantage-core" in out
-    assert "0.1.16" in out
+    assert "0.1.17" in out
     assert "COVERAGE" in out
     assert "Obs shows what ran" in out
     assert "Seen ungated" in out or "Live (gated" in out
@@ -671,7 +671,7 @@ def test_interactive_http_beat_api(tmp_path):
         assert "Peek sample exports" in page
         assert "Demo" in page
         assert "DEMO ·" in page
-        assert "0.1.16" in page
+        assert "0.1.17" in page
         assert "Interactive demo" in page
         assert "demo-banner" in page
         assert "Mirrors" not in page

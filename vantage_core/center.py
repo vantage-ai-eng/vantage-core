@@ -1405,6 +1405,7 @@ def center_to_html(model: dict[str, Any]) -> str:
       --ink: #1c1917; --muted: #57534e; --line: #d6d3d1; --paper: #fafaf9;
       --card: #fff; --pass: #166534; --pass-bg: #dcfce7;
       --block: #991b1b; --block-bg: #fee2e2; --review: #92400e; --review-bg: #fef3c7;
+      --brand: #1375d9; --brand-deep: #0f5fad; --brand-bg: #e8f4fd; --brand-border: #93c5fd;
     }}
     * {{ box-sizing: border-box; }}
     body {{
@@ -1451,20 +1452,20 @@ def center_to_html(model: dict[str, Any]) -> str:
     section.next {{ border-color: #a8a29e; }}
     section.memory .lead, section.fleet .lead {{ margin: 0 0 0.35rem; font-weight: 600; }}
     section.intake {{ border-style: dashed; }}
-    section.export-jobs {{ border-color: #0f766e; background: #f0fdfa; }}
+    section.export-jobs {{ border-color: var(--brand); background: var(--brand-bg); }}
     section.export-jobs .lead {{ margin: 0 0 0.35rem; font-size: 0.95rem; line-height: 1.5; }}
     section.export-jobs .fuel-quote {{
       margin: 0.45rem 0; padding: 0.45rem 0.55rem; background: #fff;
-      border-left: 3px solid #0f766e; font-size: 0.9rem; color: #1c1917;
+      border-left: 3px solid var(--brand); font-size: 0.9rem; color: #1c1917;
     }}
     section.export-jobs .fuel-how,
     section.export-jobs .fuel-gives {{ margin: 0.4rem 0 0; font-size: 0.9rem; line-height: 1.45; }}
-    section.coverage {{ border-color: #0f766e; }}
+    section.coverage {{ border-color: var(--brand); }}
     section.coverage .lead {{ margin: 0 0 0.45rem; font-size: 0.95rem; }}
     .cov-chips {{ margin: 0 0 0.5rem; display: flex; flex-wrap: wrap; gap: 0.35rem; }}
     .cov-chip {{
       display: inline-block; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em;
-      padding: 0.2rem 0.45rem; background: #f0fdfa; color: #0f766e; border: 1px solid #99f6e4;
+      padding: 0.2rem 0.45rem; background: var(--brand-bg); color: var(--brand-deep); border: 1px solid var(--brand-border);
     }}
     section.fleet {{ border-color: #a8a29e; }}
     h2 {{

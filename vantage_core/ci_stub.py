@@ -21,7 +21,7 @@ GITHUB_SUITE_GATE_YAML = """\
 # Comment: bind headline + compare_to_baseline (pull-requests: write)
 # Memo: suite.html (+ suite.pdf) + Control Center (center.html) as artifacts — not a Cloud dashboard.
 #
-# Requires vantage-core 0.1.16  ·  secret: OPENROUTER_API_KEY
+# Requires vantage-core 0.1.17  ·  secret: OPENROUTER_API_KEY
 # First PR after a green default-branch run is when --baseline appears.
 # Cadence does not observe silent same-id drift; it re-decides.
 name: vantage-core suite gate
@@ -121,7 +121,7 @@ jobs:
 """
 
 GITLAB_SUITE_GATE_YAML = """\
-# vantage-core still-trust suite gate (0.1.16)
+# vantage-core still-trust suite gate (0.1.17)
 # Include from .gitlab-ci.yml:
 #   include:
 #     - local: .gitlab-ci.vantage-core.yml

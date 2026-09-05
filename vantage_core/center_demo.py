@@ -688,7 +688,8 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
   <style>
     :root {{
       --ink: #1c1917; --muted: #57534e; --line: #d6d3d1; --paper: #fafaf9;
-      --card: #fff; --accent: #0f766e; --accent-bg: #ccfbf1;
+      --card: #fff; --accent: #1375d9; --accent-bg: #e8f4fd;
+      --accent-deep: #0f5fad; --accent-border: #93c5fd;
     }}
     * {{ box-sizing: border-box; }}
     body {{
@@ -697,7 +698,7 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
       height: 100vh; display: flex; flex-direction: column;
     }}
     .demo-banner {{
-      padding: 0.4rem 1.25rem; background: #0f766e; color: #ecfdf5;
+      padding: 0.4rem 1.25rem; background: var(--accent); color: #eff6ff;
       font-size: 0.78rem; font-weight: 650; letter-spacing: 0.02em;
       display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: baseline;
       justify-content: space-between;
@@ -748,7 +749,7 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
     .pillars span {{ display: block; margin: 0.15rem 0; }}
     .formats {{
       margin: 0.85rem 0 0; padding: 0.65rem 0.7rem; border: 1px solid var(--accent);
-      background: #f0fdfa; font-size: 0.78rem;
+      background: var(--accent-bg); font-size: 0.78rem;
     }}
     .formats[hidden] {{ display: none; }}
     .formats strong {{ display: block; color: var(--ink); margin-bottom: 0.4rem; font-size: 0.7rem;
@@ -767,7 +768,7 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
     }}
     .fuel {{
       margin: 1rem 0 0; padding: 0.75rem; border: 1px dashed var(--accent);
-      background: #f0fdfa; font-size: 0.82rem; display: none;
+      background: var(--accent-bg); font-size: 0.82rem; display: none;
     }}
     .fuel.show {{ display: block; }}
     .fuel h3 {{

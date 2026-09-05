@@ -1,4 +1,4 @@
-# vantage-core still-trust suite gate (0.1.16)
+# vantage-core still-trust suite gate (0.1.17)
 # Include from .gitlab-ci.yml:
 #   include:
 #     - local: .gitlab-ci.vantage-core.yml

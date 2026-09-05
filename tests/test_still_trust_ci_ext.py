@@ -234,7 +234,7 @@ def test_demo_offline_talk_track(capsys):
     assert "COVERAGE" in out
     assert "Obs shows what ran" in out
     assert "Mirrors vantage-core" in out
-    assert "0.1.16" in out
+    assert "0.1.17" in out
 
 
 def test_demo_offline_save_writes_json_for_report(tmp_path, capsys):
