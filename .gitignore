@@ -8,3 +8,4 @@ venv/
 decisions/*.json
 decisions/*.html
 !decisions/.gitkeep
+.DS_Store
