@@ -1,9 +1,12 @@
-# Complement intake — telemetry → path plans
+# Complement intake — telemetry → path plans + Coverage
 
-Already have LangSmith, Braintrust, or similar? **Export a JSON dump → one CLI command → ranked path suggestions + optional draft contracts.**
+**Obs shows what ran; Center shows which of those behaviors you already gate, which you still owe, and what the next ship would change.**
+
+Already have LangSmith, Braintrust, or similar? **Export a JSON dump → one CLI command → ranked path suggestions + optional draft contracts.** Open Center with that plan to see **Live / Seen ungated / Pending**.
 
 **Accelerate authoring** = shorter blank-page work (ranked paths + optional drafts). Someone still edits system prompts, hard-checks, IDs, and owns the suite.  
-**Auto-write** would mean export in → production suite out with no human ownership — we do **not** do that. No live sync (no OAuth).
+**Coverage** = same file fuels the cockpit: Live (on last ship-cleared PASS), Seen ungated (export not in suite), Pending (authored, not yet on that PASS).  
+**Auto-write** would mean export in → production suite out with no human ownership — we do **not** do that. No live sync (no OAuth). Not continuous prod monitoring.
 
 | | Accelerate (what we ship) | Auto-write (not us) |
 |---|---|---|
@@ -36,7 +39,13 @@ vantage-core ingest path/to/export.json \
 vantage-core ingest path/to/export.json --json
 ```
 
-Then tighten drafts → `suite run` / `suite rerun --baseline`.
+Then tighten drafts → `suite run` / `suite rerun --baseline`, and open Center:
+
+```bash
+vantage-core center --suite suites/starter.suite.yaml \
+  --decisions decisions/ --html decisions/center.html
+# picks newest decisions/ingest-*.json when present → Coverage + Author next
+```
 
 | Source | Typical export shape we accept |
 |--------|--------------------------------|

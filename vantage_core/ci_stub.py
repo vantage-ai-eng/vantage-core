@@ -2,7 +2,7 @@
 
 Write with: vantage-core ci stub github|gitlab
 Not a GitHub App. Partner marks the job as a required check.
-Human memo (HTML/PDF) + still-ship Center are CI artifacts in *their* store —
+Human memo (HTML/PDF) + Control Center are CI artifacts in *their* store —
 not a Cloud dashboard.
 """
 
@@ -19,9 +19,9 @@ GITHUB_SUITE_GATE_YAML = """\
 # Weekly schedule: cadence re-decide vs last ship (trigger=cadence).
 # Bind: GITHUB_SHA / PR → decision.bind
 # Comment: bind headline + compare_to_baseline (pull-requests: write)
-# Memo: suite.html (+ suite.pdf) + still-ship Center (center.html) as artifacts — not a Cloud dashboard.
+# Memo: suite.html (+ suite.pdf) + Control Center (center.html) as artifacts — not a Cloud dashboard.
 #
-# Requires vantage-core 0.1.13  ·  secret: OPENROUTER_API_KEY
+# Requires vantage-core 0.1.15  ·  secret: OPENROUTER_API_KEY
 # First PR after a green default-branch run is when --baseline appears.
 # Cadence does not observe silent same-id drift; it re-decides.
 name: vantage-core suite gate
@@ -93,7 +93,7 @@ jobs:
               --json --save decisions/ --ci-comment | tee decisions/suite.json
           fi
 
-      - name: Human scorecard memo + still-ship Center
+      - name: Human scorecard memo + Control Center
         if: always()
         continue-on-error: true
         run: |
@@ -121,7 +121,7 @@ jobs:
 """
 
 GITLAB_SUITE_GATE_YAML = """\
-# vantage-core still-trust suite gate (0.1.13)
+# vantage-core still-trust suite gate (0.1.15)
 # Include from .gitlab-ci.yml:
 #   include:
 #     - local: .gitlab-ci.vantage-core.yml
@@ -132,7 +132,7 @@ GITLAB_SUITE_GATE_YAML = """\
 # Pipeline schedule: cadence re-decide vs last ship (trigger=cadence).
 # Bind: CI_COMMIT_SHA → decision.bind (source gitlab_ci)
 # Comment: bind + compare_to_baseline via CI_JOB_TOKEN / GITLAB_TOKEN
-# Memo: suite.html (+ suite.pdf) + still-ship Center (center.html) as artifacts — not a Cloud dashboard.
+# Memo: suite.html (+ suite.pdf) + Control Center (center.html) as artifacts — not a Cloud dashboard.
 
 stages:
   - gate

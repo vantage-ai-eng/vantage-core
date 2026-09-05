@@ -3,9 +3,9 @@
 # Weekly schedule: cadence re-decide vs last ship (trigger=cadence).
 # Bind: GITHUB_SHA / PR → decision.bind
 # Comment: bind headline + compare_to_baseline (pull-requests: write)
-# Memo: suite.html (+ suite.pdf) + still-ship Center (center.html) as artifacts — not a Cloud dashboard.
+# Memo: suite.html (+ suite.pdf) + Control Center (center.html) as artifacts — not a Cloud dashboard.
 #
-# Requires vantage-core 0.1.13  ·  secret: OPENROUTER_API_KEY
+# Requires vantage-core 0.1.15  ·  secret: OPENROUTER_API_KEY
 # First PR after a green default-branch run is when --baseline appears.
 # Cadence does not observe silent same-id drift; it re-decides.
 name: vantage-core suite gate
@@ -77,7 +77,7 @@ jobs:
               --json --save decisions/ --ci-comment | tee decisions/suite.json
           fi
 
-      - name: Human scorecard memo + still-ship Center
+      - name: Human scorecard memo + Control Center
         if: always()
         continue-on-error: true
         run: |

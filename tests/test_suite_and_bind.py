@@ -495,6 +495,7 @@ def test_bundled_demo_suite_validates():
 
     samples = Path(__file__).resolve().parents[1] / "vantage_core" / "samples"
     assert (samples / "demo.suite.yaml").is_file()
+    assert (samples / "langsmith_export_sample.json").is_file()
     assert main(["suite", "validate", str(samples / "demo.suite.yaml")]) == 0
 
 

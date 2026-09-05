@@ -1,4 +1,4 @@
-"""Still-ship Center — local HTML lens (offline; not a hosted dashboard)."""
+"""RuntimeAI Control Center — local HTML lens (offline; not a hosted dashboard)."""
 
 from __future__ import annotations
 
@@ -49,7 +49,9 @@ def test_center_html_block_path_and_bind(tmp_path):
     assert "BLOCK" in html
     assert "sample.acme_cite_sources_v1" in html or "cite_sources" in html
     assert "PR #142" in html or "f41d8c3" in html
-    assert "still-ship Center" in html or "Still-ship Center" in html
+    assert "RuntimeAI Control Center" in html
+    assert "Still Trust / Ship" in html
+    assert "Overview" in html
     assert "Local artifact" in html or "Local control surface" in html
     assert "RuntimeAI Cloud" in html
     assert "Path register" in html
@@ -260,6 +262,126 @@ def test_center_auto_pick_ingest(tmp_path):
     assert "Tool refuse" in html or "tool_refuse" in html or "Suggested paths" in html
 
 
+def test_center_coverage_live_and_seen_ungated(tmp_path):
+    """PASS ledger + ingest → Coverage shows LIVE + SEEN · UNGATED."""
+    before = json.loads(BEFORE.read_text(encoding="utf-8"))
+    decisions = tmp_path / "decisions"
+    decisions.mkdir()
+    (decisions / "pass.json").write_text(json.dumps(before, indent=2), encoding="utf-8")
+    ingest = {
+        "source": "langsmith_export_sample.json",
+        "suggestions": [
+            {
+                "slug": "refuse_pii",
+                "name": "Refuse PII",
+                "severity": "high",
+                "reason": "already gated",
+                "starter": "01_refuse_pii.yaml",
+            },
+            {
+                "slug": "sql_safety",
+                "name": "SQL safety",
+                "severity": "high",
+                "reason": "23 empty SQL tool failures",
+                "starter": "04_sql_safety.yaml",
+                "evidence": [{"run_name": "sql_tool", "quote": "SELECT *"}],
+            },
+        ],
+        "coverage_gaps": [],
+    }
+    ingest_path = decisions / "ingest-cov.json"
+    ingest_path.write_text(json.dumps(ingest, indent=2), encoding="utf-8")
+    html_path = decisions / "center.html"
+    assert (
+        main(
+            [
+                "center",
+                "--suite",
+                str(DEMO_SUITE),
+                "--decision",
+                str(decisions / "pass.json"),
+                "--ingest",
+                str(ingest_path),
+                "--html",
+                str(html_path),
+            ]
+        )
+        == 0
+    )
+    html = html_path.read_text(encoding="utf-8")
+    assert "Coverage" in html
+    assert "LIVE" in html
+    assert "SEEN" in html and "UNGATED" in html
+    assert "sql_safety" in html.lower() or "SQL safety" in html
+    assert "Obs shows what ran" in html
+    assert "which of those behaviors you already gate" in html
+    assert "Author the next path" in html or "seen, ungated" in html.lower()
+
+
+def test_center_coverage_pending_release(tmp_path):
+    """Suite path not on last PASS → PENDING RELEASE."""
+    from vantage_core.center import build_center_model, center_to_html
+
+    before = json.loads(BEFORE.read_text(encoding="utf-8"))
+    contracts = EXAMPLES / "contracts" / "starters"
+    suite_yaml = tmp_path / "pending.suite.yaml"
+    suite_yaml.write_text(
+        "\n".join(
+            [
+                "schema: runtimeai.suite/v1",
+                "id: sample.acme_release_v1",
+                'name: "Pending demo"',
+                "fail_policy: all_must_pass",
+                "paths:",
+                f"  - path: {contracts / '01_refuse_pii.yaml'}",
+                f"  - path: {contracts / '02_cite_sources.yaml'}",
+                f"  - path: {contracts / '03_escalate_not_guess.yaml'}",
+                f"  - path: {contracts / '04_sql_safety.yaml'}",
+                '    why: "SQL — not yet ship-cleared"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    suite = load_suite(suite_yaml)
+    model = build_center_model(
+        decision=before,
+        decision_path=tmp_path / "pass.json",
+        suite=suite,
+        suite_path=suite_yaml,
+        history=[],
+    )
+    cov = model.get("coverage") or {}
+    states = {r["id"]: r["state"] for r in cov.get("rows") or []}
+    assert any(s == "live" for s in states.values())
+    assert any(s == "pending" for s in states.values()), states
+    html = center_to_html(model)
+    assert "PENDING RELEASE" in html
+    assert "Coverage" in html
+
+
+def test_demo_coverage_beats(tmp_path):
+    from vantage_core.center_demo import (
+        beat_ingest_coverage,
+        beat_pending_cleared_live,
+        beat_pending_release,
+    )
+
+    r4 = beat_ingest_coverage(tmp_path)
+    html4 = Path(r4["center"]).read_text(encoding="utf-8")
+    assert "Coverage" in html4
+    assert "SEEN" in html4 or "UNGATED" in html4 or "sql_safety" in html4.lower()
+
+    r5 = beat_pending_release(tmp_path)
+    html5 = Path(r5["center"]).read_text(encoding="utf-8")
+    assert "PENDING" in html5
+
+    r6 = beat_pending_cleared_live(tmp_path)
+    html6 = Path(r6["center"]).read_text(encoding="utf-8")
+    assert "Coverage" in html6
+    assert "LIVE" in html6
+
+
 def test_discover_helpers(tmp_path):
     suites = tmp_path / "suites"
     suites.mkdir()
@@ -296,8 +418,23 @@ def test_demo_save_writes_center(tmp_path, capsys):
     html = center.read_text(encoding="utf-8")
     assert "BLOCK" in html
     assert "Local control surface" in html or "Local artifact" in html
+    assert "Coverage" in html
+    assert (tmp_path / "ingest-demo.json").is_file()
     err = capsys.readouterr().err
     assert "center" in err.lower()
+
+
+def test_demo_offline_prints_coverage(capsys):
+    code = main(["demo", "--offline"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "SAVED-EXAMPLE DEMO" in out
+    assert "Mirrors vantage-core" in out
+    assert "0.1.15" in out
+    assert "COVERAGE" in out
+    assert "Obs shows what ran" in out
+    assert "Seen ungated" in out or "Live (gated" in out
+    assert "demo --interactive" in out
 
 
 def test_ci_stub_emits_center_html_artifact():
@@ -307,7 +444,7 @@ def test_ci_stub_emits_center_html_artifact():
         assert "vantage-core center" in text
         assert "decisions/center.html" in text
         assert "--decisions decisions/" in text
-        assert "still-ship Center" in text or "center.html" in text
+        assert "Control Center" in text or "center.html" in text
 
 
 def test_fleet_register_from_tmp_cwd(tmp_path, monkeypatch):
@@ -448,11 +585,21 @@ def test_maybe_save_writes_center(tmp_path, monkeypatch):
     _maybe_save_decision(after, str(save), suite_path=DEMO_SUITE)
     assert (save / "center.html").is_file()
     html = (save / "center.html").read_text(encoding="utf-8")
-    assert "still-ship Center" in html or "Still-ship Center" in html
+    assert "RuntimeAI Control Center" in html
+    assert "Still Trust / Ship" in html
+    assert "Overview" in html
     assert "BLOCK" in html or "PASS" in html
 
 def test_interactive_beats_update_center(tmp_path):
-    from vantage_core.center_demo import beat_after_change, beat_fleet, beat_last_ship
+    from vantage_core.center_demo import (
+        beat_after_change,
+        beat_fleet,
+        beat_ingest_coverage,
+        beat_last_ship,
+        beat_pending_cleared_live,
+        beat_pending_release,
+        beat_proof_core,
+    )
 
     r1 = beat_last_ship(tmp_path)
     assert r1["route"] == "pass"
@@ -465,10 +612,43 @@ def test_interactive_beats_update_center(tmp_path):
     assert "STOP" in html2 or "BLOCK" in html2
     assert "Vs last ship" in html2
 
-    r3 = beat_fleet(tmp_path)
+    r3 = beat_ingest_coverage(tmp_path)
     html3 = Path(r3["center"]).read_text(encoding="utf-8")
-    assert "Fleet register" in html3
-    assert "CLEAR" in html3 and "STOP" in html3
+    assert "Coverage" in html3
+    assert "Same export" in html3 or "Author next" in html3 or "What you already have" in html3
+    assert "LangSmith" in html3 or "What you already have" in html3
+    assert r3.get("drafts", 0) >= 1
+    assert r3.get("fuel", {}).get("label")
+    assert list((tmp_path / "contracts_drafts").glob("*.draft.yaml"))
+
+    r4 = beat_pending_release(tmp_path)
+    assert "PENDING" in Path(r4["center"]).read_text(encoding="utf-8")
+
+    r5 = beat_pending_cleared_live(tmp_path)
+    assert "LIVE" in Path(r5["center"]).read_text(encoding="utf-8")
+
+    r6 = beat_fleet(tmp_path)
+    html6 = Path(r6["center"]).read_text(encoding="utf-8")
+    assert "Fleet register" in html6
+    assert "CLEAR" in html6 and "STOP" in html6
+
+    r7 = beat_proof_core(tmp_path)
+    assert r7.get("view") == "report"
+    assert r7.get("formats", {}).get("html") == "/suite.html"
+    assert r7.get("formats", {}).get("json") == "/suite.json"
+    assert r7.get("formats", {}).get("pdf") == "/suite.pdf"
+    assert r7.get("formats", {}).get("detailed") == "/simulation_scorecard.pdf"
+    html = (tmp_path / "decisions" / "suite.html").read_text(encoding="utf-8")
+    assert "RuntimeAI" in html
+    assert "Local artifact" in html or "not RuntimeAI Cloud" in html
+    assert (tmp_path / "decisions" / "suite.pdf").read_bytes()[:4] == b"%PDF"
+    detailed = (tmp_path / "decisions" / "simulation_scorecard.pdf").read_bytes()
+    assert detailed[:4] == b"%PDF"
+    assert len(detailed) > 5_000
+    decision = json.loads((tmp_path / "decisions" / "suite.json").read_text(encoding="utf-8"))
+    assert "runtimeai.decision" in str(decision.get("schema") or "")
+    assert "Four things we claim" not in r7.get("say", "")
+    assert "summary" in r7.get("say", "").lower() or "detailed" in r7.get("say", "").lower()
 
 
 def test_interactive_http_beat_api(tmp_path):
@@ -477,23 +657,56 @@ def test_interactive_http_beat_api(tmp_path):
     from vantage_core.center_demo import run_interactive
 
     server = run_interactive(
-        out=tmp_path, port=18767, open_browser=False, block=False
+        out=tmp_path, port=18768, open_browser=False, block=False
     )
     try:
-        with urlopen("http://127.0.0.1:18767/", timeout=3) as resp:
+        with urlopen("http://127.0.0.1:18768/", timeout=3) as resp:
             page = resp.read().decode("utf-8")
-        assert "still-ship Center walkthrough" in page
+        assert "RuntimeAI Control Center" in page
+        assert "easy visibility" in page.lower() or "obscure" in page.lower() or "Still Trust" in page
+        assert "Portable" in page or "Why this exists" in page or "Secure" in page
+        assert "langsmith_export_sample" in page
+        assert "braintrust_export_sample" in page
+        assert "Peek sample exports" in page
+        assert "Mirrors" in page
+        assert "0.1.15" in page
+        req7 = Request(
+            "http://127.0.0.1:18768/api/beat/7",
+            data=b"",
+            method="POST",
+        )
+        with urlopen(req7, timeout=30) as resp:
+            data7 = json.loads(resp.read().decode("utf-8"))
+        assert data7.get("view") == "report"
+        assert data7.get("formats", {}).get("json") == "/suite.json"
+        assert data7.get("formats", {}).get("detailed") == "/simulation_scorecard.pdf"
+        assert "Four things we claim" not in (data7.get("say") or "")
+        with urlopen("http://127.0.0.1:18768/suite.html", timeout=3) as resp:
+            html = resp.read().decode("utf-8")
+        assert "RuntimeAI" in html
+        assert "Local artifact" in html or "not RuntimeAI Cloud" in html
+        with urlopen("http://127.0.0.1:18768/suite.pdf", timeout=3) as resp:
+            assert resp.status == 200
+            assert resp.read()[:4] == b"%PDF"
+        with urlopen("http://127.0.0.1:18768/simulation_scorecard.pdf", timeout=3) as resp:
+            assert resp.status == 200
+            detailed = resp.read()
+        assert detailed[:4] == b"%PDF"
+        assert len(detailed) > 5_000
+        with urlopen("http://127.0.0.1:18768/suite.json", timeout=3) as resp:
+            dec = json.loads(resp.read().decode("utf-8"))
+        assert "schema" in dec
         req = Request(
-            "http://127.0.0.1:18767/api/beat/2",
+            "http://127.0.0.1:18768/api/beat/3",
             data=b"",
             method="POST",
         )
         with urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-        assert data.get("route") == "block"
-        with urlopen("http://127.0.0.1:18767/center.html", timeout=3) as resp:
+        assert data.get("route") == "coverage"
+        with urlopen("http://127.0.0.1:18768/center.html", timeout=3) as resp:
             center = resp.read().decode("utf-8")
-        assert "BLOCK" in center or "STOP" in center
+        assert "Coverage" in center
     finally:
         server.shutdown()
         server.server_close()

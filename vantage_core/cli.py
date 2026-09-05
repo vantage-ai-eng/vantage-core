@@ -409,7 +409,7 @@ def _maybe_save_decision(
 
     path = save_decision(decision, save_dir)
     print(f"saved  {path}", file=sys.stderr)
-    # Refresh still-ship Center whenever the ledger grows (control surface).
+    # Refresh Control Center whenever the ledger grows (control surface).
     try:
         from vantage_core.center import (
             build_fleet_register,
@@ -632,7 +632,8 @@ def cmd_demo_offline(args: argparse.Namespace) -> int:
     after_view = dict(after)
     after_view["compare_to_baseline"] = cmp
     comment = format_comment(after_view)
-    _maybe_save_offline_demo(before, after, before_p, getattr(args, "save", None))
+    save_dir = getattr(args, "save", None)
+    _maybe_save_offline_demo(before, after, before_p, save_dir)
 
     if args.json:
         print(
@@ -650,7 +651,8 @@ def cmd_demo_offline(args: argparse.Namespace) -> int:
         return 0
 
     print("=" * 64)
-    print("  SAVED-EXAMPLE DEMO  ·  no API key  ·  offline")
+    print(f"  SAVED-EXAMPLE DEMO  ·  no API key  ·  offline")
+    print(f"  Mirrors vantage-core {__version__}  ·  Author + Coverage on Center")
     print("  Seat: ship / still-trust gate. Not traces.")
     print("=" * 64)
     print()
@@ -685,6 +687,36 @@ def cmd_demo_offline(args: argparse.Namespace) -> int:
     print()
     print("--- WHAT SHOWS ON THE PR ---")
     print(comment)
+    print()
+
+    # --- Authoring + Coverage (same export, both jobs) ---
+    cov_lines = _demo_coverage_say(before, before_p)
+    if cov_lines:
+        print("--- AUTHORING + COVERAGE (same export · two jobs) ---")
+        print(
+            "SAY:  Goal: easy ship visibility where telemetry today is hard to read and obscure. "
+            "Obs shows what ran; Center shows which of those behaviors "
+            "you already gate, which you still owe, and what the next ship would change."
+        )
+        print()
+        print("  Job 1 · AUTHOR — Seen ungated → draft contracts (you edit & own the bar)")
+        print("  Job 2 · VISIBILITY — Coverage chips on the ship surface:")
+        for line in cov_lines:
+            print(line)
+        print()
+        print("  Recognize your tool (bundled samples):")
+        print("    LangSmith   · vantage_core/samples/langsmith_export_sample.json")
+        print("    Braintrust  · vantage_core/samples/braintrust_export_sample.json")
+        print("    Then: vantage-core ingest your-export.json --write-drafts ./contracts_drafts")
+        print()
+        print(
+            "SAY:  Live = on last ship-cleared PASS. "
+            "Seen ungated = in their LangSmith export, not in the suite — author next. "
+            "Pending = authored, not yet on that PASS. "
+            "Same file fuel — not continuous monitoring."
+        )
+        print()
+
     print("SAY:  To put this on every pull request:")
     print("        vantage-core ci stub github")
     print("      Mark that job as a required check.")
@@ -694,16 +726,80 @@ def cmd_demo_offline(args: argparse.Namespace) -> int:
     print("  export OPENROUTER_API_KEY=sk-or-...")
     print("  vantage-core demo --live")
     print()
-    print("Interactive Center (browser control surface):")
+    print("Interactive Center (browser — beat 3 = Author + Coverage):")
     print("  vantage-core demo --interactive")
     print()
     print("Human memo (offline, no account):")
     print("  vantage-core demo --save decisions/")
     print("  vantage-core report \"$(vantage-core decisions latest)\" --html decisions/suite.html")
-    print("Still-ship Center (management lens, offline):")
+    print("RuntimeAI Control Center with Author + Coverage (management lens):")
+    print("  vantage-core demo --interactive   # browser walkthrough (recommended)")
+    print("  vantage-core center --demo        # same")
     print("  vantage-core center --decisions decisions/ --html decisions/center.html")
     print("=" * 64)
     return 0
+
+
+def _demo_coverage_say(
+    last_pass: dict,
+    last_pass_path: Path,
+) -> list[str]:
+    """Build printable Coverage summary from sample export + last PASS."""
+    try:
+        from vantage_core.center import build_center_model
+        from vantage_core.ingest import analyze_export
+        from vantage_core.suite import load_suite
+    except Exception:
+        return []
+
+    samples = _pkg_samples_dir()
+    suite_path = samples / "demo.suite.yaml"
+    export_path = (
+        Path(__file__).resolve().parent.parent
+        / "examples"
+        / "ingest"
+        / "langsmith_export_sample.json"
+    )
+    pkg_export = Path(__file__).resolve().parent / "samples" / "langsmith_export_sample.json"
+    if pkg_export.is_file():
+        export_path = pkg_export
+    if not suite_path.is_file() or not export_path.is_file():
+        return []
+    try:
+        suite = load_suite(suite_path)
+        raw = json.loads(export_path.read_text(encoding="utf-8"))
+        ingest = analyze_export(raw, limit=8)
+        ingest["source"] = export_path.name
+        model = build_center_model(
+            decision=last_pass,
+            decision_path=last_pass_path,
+            suite=suite,
+            suite_path=suite_path,
+            ingest=ingest,
+            ingest_path=export_path,
+        )
+    except Exception:
+        return []
+
+    cov = model.get("coverage") if isinstance(model.get("coverage"), dict) else None
+    if not cov or not cov.get("rows"):
+        return []
+    counts = cov.get("counts") or {}
+    lines = [
+        f"  Live (gated on last ship)     · {counts.get('live', 0)}",
+        f"  Seen ungated (author next)    · {counts.get('seen_ungated', 0)}",
+        f"  Pending release               · {counts.get('pending', 0)}",
+    ]
+    if counts.get("stale"):
+        lines.append(f"  Stale gate                    · {counts.get('stale', 0)}")
+    # Show one ungated example
+    for r in cov.get("rows") or []:
+        if r.get("state") == "seen_ungated":
+            lines.append(
+                f"  e.g. SEEN · UNGATED · {r.get('id')} — {r.get('note') or r.get('name') or ''}"
+            )
+            break
+    return lines
 
 
 def _maybe_save_offline_demo(
@@ -730,9 +826,10 @@ def _maybe_save_offline_demo(
         f"next   vantage-core report {p2} --html {dest_html}",
         file=sys.stderr,
     )
-    # Still-ship Center (management lens) — same offline fixtures; both memo + center.
+    # Control Center (management lens) — fixtures + sample ingest → Coverage.
     try:
-        from vantage_core.center import write_center_html
+        from vantage_core.center import load_ledger_history, write_center_html
+        from vantage_core.ingest import analyze_export
 
         samples = _pkg_samples_dir()
         suite_path = samples / "demo.suite.yaml"
@@ -741,20 +838,66 @@ def _maybe_save_offline_demo(
             from vantage_core.suite import load_suite
 
             suite = load_suite(suite_path)
+        decisions = Path(save_dir).expanduser()
+        ingest = None
+        ingest_path = None
+        export_path = (
+            Path(__file__).resolve().parent.parent
+            / "examples"
+            / "ingest"
+            / "langsmith_export_sample.json"
+        )
+        pkg_export = (
+            Path(__file__).resolve().parent / "samples" / "langsmith_export_sample.json"
+        )
+        if pkg_export.is_file():
+            export_path = pkg_export
+        if export_path.is_file():
+            raw = json.loads(export_path.read_text(encoding="utf-8"))
+            ingest = analyze_export(raw, limit=8)
+            ingest["source"] = export_path.name
+            ingest_path = decisions / "ingest-demo.json"
+            ingest_path.write_text(json.dumps(ingest, indent=2) + "\n", encoding="utf-8")
+            print(f"ingest {ingest_path}", file=sys.stderr)
+            try:
+                from vantage_core.ingest import write_drafts
+
+                save_root = Path(save_dir).expanduser().resolve()
+                drafts_dir = (
+                    save_root.parent / "contracts_drafts"
+                    if save_root.name == "decisions"
+                    else save_root / "contracts_drafts"
+                )
+                written = write_drafts(
+                    list(ingest.get("suggestions") or []),
+                    drafts_dir,
+                    force=True,
+                )
+                if written:
+                    print(
+                        f"drafts {len(written)} under {drafts_dir}  # Author job",
+                        file=sys.stderr,
+                    )
+            except Exception as draft_exc:
+                print(f"drafts skipped: {draft_exc}", file=sys.stderr)
+        hist = load_ledger_history(decisions, limit=24)
         write_center_html(
             dest_center,
             decision=after_saved,
             decision_path=p2,
             suite=suite,
             suite_path=suite_path if suite_path.is_file() else None,
+            history=hist,
+            ingest=ingest,
+            ingest_path=ingest_path,
         )
         print(f"center {dest_center}", file=sys.stderr)
         print(
-            f"next   open {dest_center}  # still-ship Center (management)",
+            f"next   open {dest_center}  # Control Center · Author + Coverage",
             file=sys.stderr,
         )
         print(
-            "hint   With multiple suites/*.suite.yaml, center shows a fleet register.",
+            "hint   Beats: vantage-core demo --interactive  (Author+Coverage = beat 3)",
             file=sys.stderr,
         )
     except Exception as exc:
@@ -1274,7 +1417,19 @@ def cmd_yamls(args: argparse.Namespace) -> int:
 
 
 def cmd_center(args: argparse.Namespace) -> int:
-    """Render the still-ship Center — local HTML lens over suite(s) + ledger."""
+    """Render RuntimeAI Control Center — local HTML lens over suite(s) + ledger."""
+    if bool(getattr(args, "demo", False)):
+        from vantage_core.center_demo import run_interactive
+
+        port = int(getattr(args, "port", 8767) or 8767)
+        out = getattr(args, "demo_out", None) or "/tmp/vantage-center-demo"
+        run_interactive(
+            out=out,
+            port=port,
+            open_browser=not bool(getattr(args, "no_open", False)),
+        )
+        return 0
+
     from vantage_core.center import (
         _decision_suite_id,
         build_fleet_register,
@@ -1467,8 +1622,14 @@ def cmd_report(args: argparse.Namespace) -> int:
         if pdf_out:
             dest = Path(pdf_out).expanduser()
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(decision_to_pdf_bytes(decision))
-            print(f"pdf  {dest}", file=sys.stderr)
+            pdf_bytes = decision_to_pdf_bytes(decision)
+            dest.write_bytes(pdf_bytes)
+            engine = (
+                "html-scorecard"
+                if len(pdf_bytes) > 8_000
+                else "minimal"
+            )
+            print(f"pdf  {dest}  ({engine})", file=sys.stderr)
     except Exception as exc:
         print(f"vantage-core report failed: {exc}", file=sys.stderr)
         return 1
@@ -1733,7 +1894,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     demo_p = sub.add_parser(
         "demo",
-        help="saved-example talk track (no key, offline) or live Acme sample suite (--live)",
+        help=(
+            "Ship Control Center in the browser (--interactive) or offline talk track; "
+            "--live runs the Acme sample suite (needs API key)"
+        ),
     )
     demo_p.add_argument(
         "--offline",
@@ -1748,7 +1912,7 @@ def build_parser() -> argparse.ArgumentParser:
     demo_p.add_argument(
         "--interactive",
         action="store_true",
-        help="Browser walkthrough: run beats and watch the still-ship Center update",
+        help="Browser walkthrough: run beats and watch Control Center update (recommended)",
     )
     demo_p.add_argument(
         "--port",
@@ -1953,9 +2117,31 @@ def build_parser() -> argparse.ArgumentParser:
     center_p = sub.add_parser(
         "center",
         help=(
-            "Still-ship Center — local HTML lens over suite + latest decision + "
-            "path blockers + bind (offline; not a hosted dashboard)"
+            "RuntimeAI Control Center — local HTML lens over suite + latest decision + "
+            "Coverage + path blockers + bind (offline; not a hosted dashboard). "
+            "Pass --demo to launch the interactive browser walkthrough."
         ),
+    )
+    center_p.add_argument(
+        "--demo",
+        action="store_true",
+        help="Launch interactive Control Center walkthrough (same as demo --interactive)",
+    )
+    center_p.add_argument(
+        "--port",
+        type=int,
+        default=8767,
+        help="Port for --demo (default 8767)",
+    )
+    center_p.add_argument(
+        "--demo-out",
+        default="/tmp/vantage-center-demo",
+        help="Workdir for --demo decisions/ + center.html",
+    )
+    center_p.add_argument(
+        "--no-open",
+        action="store_true",
+        help="With --demo, do not open a browser tab",
     )
     center_p.add_argument(
         "--suite",

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vantage-core"
-version = "0.1.13"
+version = "0.1.15"
 description = "RuntimeAI check-ride CLI — portable decision artifact for agent release gates"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -58,6 +58,8 @@ vantage_core = [
   "starters/*.yaml",
   "samples/*.yaml",
   "samples/*.md",
+  "samples/*.json",
+  "samples/*.pdf",
   "demo_fixtures/*.json",
 ]
 

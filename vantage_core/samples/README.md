@@ -16,6 +16,21 @@ Two uses, one pack:
 | [`03_escalate_not_guess.yaml`](03_escalate_not_guess.yaml) | Fakes root cause |
 | [`demo.suite.yaml`](demo.suite.yaml) | All three as one gate |
 
+## Telemetry export samples (recognize your tool)
+
+| File | Shape |
+|------|--------|
+| [`langsmith_export_sample.json`](langsmith_export_sample.json) | LangSmith `runs` |
+| [`braintrust_export_sample.json`](braintrust_export_sample.json) | Braintrust `events` |
+| [`simulation_scorecard_sample.pdf`](simulation_scorecard_sample.pdf) | Product Simulation scorecard (detailed PDF) |
+
+```bash
+vantage-core ingest vantage_core/samples/langsmith_export_sample.json --write-drafts ./contracts_drafts
+# or your own export:
+vantage-core ingest your-export.json --write-drafts ./contracts_drafts
+```
+
+In the interactive demo: beat **3** · sidebar links **Peek sample exports**; beat **7** · **PDF summary** vs **PDF detailed**.
 ```bash
 export OPENROUTER_API_KEY=sk-or-...
 vantage-core demo --json

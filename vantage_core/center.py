@@ -1,5 +1,7 @@
-"""Still-ship Center — local control surface over suite + ledger + ingest plan.
+"""RuntimeAI Control Center — local control surface over suite + ledger + ingest plan.
 
+CI is the brake (exit 0/2/1). Control Center is the cockpit: ship / still-trust,
+what blocks, path register, Coverage, author-next. Offline HTML — not Cloud.
 Offline. No RuntimeAI account. Not Cloud history — a local / CI artifact.
 UI is a lens; runtimeai.decision/v1 + suite YAML remain the source of truth.
 """
@@ -217,6 +219,9 @@ def _normalize_ingest(payload: dict[str, Any]) -> dict[str, Any]:
     suggestions = payload.get("suggestions")
     if suggestions is None and isinstance(payload.get("report"), dict):
         suggestions = payload["report"].get("suggestions")
+    shape = payload.get("shape")
+    if not isinstance(shape, dict):
+        shape = None
     return {
         "source": str(payload.get("source") or ""),
         "project": payload.get("project"),
@@ -224,6 +229,210 @@ def _normalize_ingest(payload: dict[str, Any]) -> dict[str, Any]:
         "suggestions": list(suggestions or []),
         "coverage_gaps": list(payload.get("coverage_gaps") or []),
         "claim": payload.get("claim"),
+        "shape": shape,
+        "sample_quote": payload.get("sample_quote"),
+    }
+
+
+def _id_keys(cid: str) -> set[str]:
+    """Comparable keys for a contract / suggestion id."""
+    s = str(cid or "").strip().lower()
+    if not s:
+        return set()
+    keys = {s}
+    if "." in s:
+        keys.add(s.split(".")[-1])
+    return keys
+
+
+def _path_ids_from_decision(decision: dict[str, Any] | None) -> set[str]:
+    """All path contract_ids present on a decision (ship surface)."""
+    if not decision:
+        return set()
+    suite = decision.get("suite") if isinstance(decision.get("suite"), dict) else {}
+    keys: set[str] = set()
+    for row in suite.get("paths") or []:
+        if not isinstance(row, dict):
+            continue
+        cid = str(row.get("contract_id") or row.get("path") or "").strip()
+        keys |= _id_keys(cid)
+        if row.get("path"):
+            keys |= _id_keys(Path(str(row["path"])).stem)
+    return keys
+
+
+def _last_pass_decision(
+    decision: dict[str, Any] | None,
+    history: list[tuple[Path, dict[str, Any]]] | None,
+) -> dict[str, Any] | None:
+    """Newest ship-cleared PASS — current first, else ledger (newest-first)."""
+    if decision is not None and infer_route(decision) == "pass":
+        return decision
+    for _path, data in history or []:
+        if infer_route(data) == "pass":
+            return data
+    return None
+
+
+def _suggestion_matches_keys(suggestion: dict[str, Any], keys: set[str]) -> bool:
+    slug = str(suggestion.get("slug") or "").lower()
+    sid = str(suggestion.get("id") or "").lower()
+    starter = str(suggestion.get("starter") or "").lower().replace(".yaml", "")
+    for token in (slug, sid, starter):
+        if not token:
+            continue
+        if token in keys:
+            return True
+        if any(token in k or k in token for k in keys if k):
+            return True
+    return False
+
+
+def _build_coverage(
+    *,
+    paths: list[dict[str, Any]],
+    authored: set[str],
+    ingest_out: dict[str, Any] | None,
+    last_pass: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Live / Seen-ungated / Pending / Stale — telemetry + suite + last PASS.
+
+    Live = under last ship-cleared gate (not “currently green”).
+    Pending = authored in suite but not yet on that PASS surface.
+    Seen-ungated = export cluster not in suite (author next).
+    Stale = gated on last PASS but absent from recent export (soft).
+    """
+    live_keys = _path_ids_from_decision(last_pass)
+    suggestions = list((ingest_out or {}).get("suggestions") or [])
+    gaps = list((ingest_out or {}).get("coverage_gaps") or [])
+    has_ingest = ingest_out is not None
+    has_last_pass = last_pass is not None
+
+    if not paths and not suggestions and not gaps:
+        return None
+    if not has_ingest and not has_last_pass and not paths:
+        return None
+
+    rows: list[dict[str, Any]] = []
+    seen_slugs: set[str] = set()
+
+    for p in paths:
+        cid = str(p.get("contract_id") or "").strip()
+        if not cid:
+            continue
+        keys = _id_keys(cid)
+        stem = Path(str(p.get("path") or "")).stem.lower()
+        if stem:
+            keys.add(stem)
+        on_live = bool(keys & live_keys) if live_keys else False
+        in_export = False
+        if has_ingest:
+            in_export = any(_suggestion_matches_keys(s, keys) for s in suggestions)
+            if not in_export:
+                for g in gaps:
+                    if isinstance(g, dict) and _suggestion_matches_keys(g, keys):
+                        in_export = True
+                        break
+
+        if on_live and has_ingest and not in_export:
+            state = "stale"
+            note = "Gated on last ship — absent from recent export"
+        elif on_live:
+            state = "live"
+            note = "On last ship-cleared decision (prod gate surface)"
+        else:
+            state = "pending"
+            note = (
+                "Authored — not yet on a ship-cleared PASS"
+                if has_last_pass
+                else "Authored — no ship-cleared PASS in ledger yet"
+            )
+        rows.append(
+            {
+                "id": cid,
+                "name": p.get("why") or cid,
+                "state": state,
+                "note": note,
+                "kind": "suite",
+            }
+        )
+
+    for s in suggestions:
+        if not isinstance(s, dict):
+            continue
+        if s.get("in_suite"):
+            continue
+        slug = str(s.get("slug") or s.get("id") or "").strip()
+        if slug and slug.lower() in seen_slugs:
+            continue
+        if slug:
+            seen_slugs.add(slug.lower())
+        # Skip if somehow matches authored keys
+        if slug and any(slug.lower() in k for k in authored):
+            continue
+        rows.append(
+            {
+                "id": slug or str(s.get("name") or "suggestion"),
+                "name": s.get("name") or slug or "—",
+                "state": "seen_ungated",
+                "note": str(s.get("reason") or s.get("approach") or "Seen in export — not gated"),
+                "kind": "ingest",
+                "severity": s.get("severity"),
+            }
+        )
+
+    for g in gaps:
+        if not isinstance(g, dict):
+            continue
+        slug = str(g.get("slug") or "").strip()
+        if not slug or slug.lower() in seen_slugs:
+            continue
+        if any(slug.lower() in k for k in authored):
+            continue
+        seen_slugs.add(slug.lower())
+        rows.append(
+            {
+                "id": slug,
+                "name": g.get("name") or slug,
+                "state": "seen_ungated",
+                "note": str(g.get("note") or "Coverage gap from export"),
+                "kind": "ingest",
+            }
+        )
+
+    if not rows:
+        return None
+
+    counts = {
+        "live": sum(1 for r in rows if r["state"] == "live"),
+        "seen_ungated": sum(1 for r in rows if r["state"] == "seen_ungated"),
+        "pending": sum(1 for r in rows if r["state"] == "pending"),
+        "stale": sum(1 for r in rows if r["state"] == "stale"),
+    }
+    bind = {}
+    if last_pass and isinstance(last_pass.get("bind"), dict):
+        bind = last_pass["bind"]
+    last_pass_label = (
+        str(bind.get("headline") or "")
+        or (
+            f"PR #{bind['pr_number']}"
+            if bind.get("pr_number") is not None
+            else (str(bind.get("git_sha_short") or "") or "")
+        )
+        or (str(last_pass.get("generated_at") or "")[:16] if last_pass else "")
+        or "—"
+    )
+    return {
+        "rows": rows,
+        "counts": counts,
+        "has_ingest": has_ingest,
+        "has_last_pass": has_last_pass,
+        "last_pass_label": last_pass_label if has_last_pass else None,
+        "claim": (
+            "Easy ship visibility where telemetry is hard to read: "
+            "Obs shows what ran; Center shows which of those behaviors you already gate, "
+            "which you still owe, and what the next ship would change."
+        ),
     }
 
 
@@ -571,6 +780,42 @@ def build_center_model(
                 )
             except Exception:
                 continue
+
+    # Suite paths not on the current decision still belong on Coverage / register
+    # (authored pending release).
+    if suite is not None:
+        present = _authored_path_keys(None, paths)
+        for entry in suite.paths:
+            try:
+                resolved = suite.resolve_path(entry)
+                cmeta = _load_contract_meta(resolved)
+                cid = str(entry.id or cmeta.get("id") or resolved.stem)
+                stem = resolved.stem
+                keys = _id_keys(cid) | ({stem.lower()} if stem else set())
+                if keys & present:
+                    continue
+                meta_row = path_meta.get(cid) or path_meta.get(stem) or {}
+                why = meta_row.get("why") or str(cmeta.get("name") or "")
+                priority = meta_row.get("priority") or ""
+                stats = _path_history_stats(history_rows, cid)
+                paths.append(
+                    {
+                        "contract_id": cid,
+                        "path": str(resolved.name),
+                        "passed": None,
+                        "score": "—",
+                        "usd": "—",
+                        "headline": "",
+                        "blockers": [],
+                        "why": why,
+                        "priority": priority,
+                        **stats,
+                    }
+                )
+                present |= keys
+            except Exception:
+                continue
+
     paths.sort(key=_priority_sort_key)
 
     authored = _authored_path_keys(suite, paths)
@@ -627,7 +872,17 @@ def build_center_model(
             "suggestions": suggestions,
             "coverage_gaps": norm.get("coverage_gaps") or [],
             "claim": norm.get("claim"),
+            "shape": norm.get("shape"),
+            "sample_quote": norm.get("sample_quote"),
         }
+
+    last_pass = _last_pass_decision(decision, history)
+    coverage = _build_coverage(
+        paths=paths,
+        authored=authored,
+        ingest_out=ingest_out,
+        last_pass=last_pass,
+    )
 
     # Activity rollup from history
     n = len(history_rows)
@@ -683,6 +938,7 @@ def build_center_model(
         "blocked_now": blocked_now,
         "compare": report.get("compare") if report else None,
         "ingest": ingest_out,
+        "coverage": coverage,
         "history": history_rows,
         "activity": {
             "motions": n,
@@ -704,7 +960,7 @@ def build_center_model(
 
 
 def center_to_html(model: dict[str, Any]) -> str:
-    """Render still-ship Center — cockpit (A→B→D→C) + optional fleet register (E).
+    """Render RuntimeAI Control Center — cockpit (A→B→D→C) + optional fleet register (E).
 
     Fleet is advisory rollup across suites/*.suite.yaml — not a fleet exit.
     CI owns exit per suite_id; this page is the lens.
@@ -855,15 +1111,23 @@ def center_to_html(model: dict[str, Any]) -> str:
                     }
                 )
 
+    cov = model.get("coverage") if isinstance(model.get("coverage"), dict) else None
+    cov_counts = (cov or {}).get("counts") or {}
+    n_seen = int(cov_counts.get("seen_ungated") or 0)
+    n_pending = int(cov_counts.get("pending") or 0)
+
     if not model.get("has_decision"):
         next_label = "Run your suite once"
         next_cmd = cmds.get("run") or ""
     elif route != "pass":
         next_label = "Fix failing path(s), then re-decide"
         next_cmd = cmds.get("rerun") or ""
-    elif author_next:
-        next_label = "Author the next path from your export"
+    elif n_seen or author_next:
+        next_label = "Author the next path from your export (seen, ungated)"
         next_cmd = cmds.get("ingest") or ""
+    elif n_pending:
+        next_label = "Clear pending paths onto the ship surface (re-decide)"
+        next_cmd = cmds.get("rerun") or ""
     else:
         next_label = "Re-decide after the next model / prompt change"
         next_cmd = cmds.get("rerun") or ""
@@ -874,6 +1138,120 @@ def center_to_html(model: dict[str, Any]) -> str:
       <p class="next-label">{_esc(next_label)}</p>
       <pre>{_esc(next_cmd)}</pre>
       <p class="muted">CI is the brake — this Center does not override exit {_esc(model.get('exit_code'))}.</p>
+    </section>"""
+
+    export_jobs_html = ""
+    dual_jobs = bool(model.get("ingest") and (author_next or (cov and cov.get("rows"))))
+    if dual_jobs and ingest:
+        shape = ingest.get("shape") if isinstance(ingest.get("shape"), dict) else {}
+        tool_label = str((shape or {}).get("label") or "JSON export")
+        tool_hint = str((shape or {}).get("hint") or "")
+        project = str(ingest.get("project") or "—")
+        run_n = ingest.get("run_count")
+        run_bit = f"{run_n} run(s)" if run_n is not None else "export loaded"
+        src = str(ingest.get("source") or "export.json")
+        quote = str(ingest.get("sample_quote") or "").strip()
+        quote_html = (
+            f'<p class="fuel-quote">“{_esc(quote)}”</p>'
+            if quote
+            else ""
+        )
+        export_jobs_html = f"""
+    <section class="export-jobs">
+      <h2>What you already have</h2>
+      <p class="lead">
+        <strong>{_esc(tool_label)}</strong>
+        · project <code>{_esc(project)}</code>
+        · {_esc(run_bit)}
+        · file <code>{_esc(src)}</code>
+      </p>
+      {quote_html}
+      <p class="muted">{_esc(tool_hint)}</p>
+      <p class="fuel-how">
+        <strong>How:</strong> drop your export →
+        <code>vantage-core ingest your-export.json --write-drafts ./contracts_drafts</code>
+      </p>
+      <p class="fuel-gives">
+        <strong>What this gives:</strong>
+        <strong>1 · Author</strong> — Seen ungated → draft contracts you edit
+        · <strong>2 · Coverage</strong> — Live / Seen ungated / Pending / Stale
+      </p>
+      <p class="muted">One-shot file fuel — not OAuth, not continuous monitoring.</p>
+    </section>"""
+    elif dual_jobs:
+        export_jobs_html = """
+    <section class="export-jobs">
+      <h2>Same export · two jobs</h2>
+      <p class="lead">
+        <strong>1 · Author</strong> — what you still owe (Seen ungated → draft contracts you edit).
+        <strong>2 · Coverage</strong> — Live / Seen ungated / Pending / Stale on the ship surface.
+      </p>
+      <p class="muted">Not continuous monitoring — one-shot file fuel for the cockpit.</p>
+    </section>"""
+
+    coverage_html = ""
+    if cov and cov.get("rows"):
+        state_label = {
+            "live": ("LIVE", "ok"),
+            "seen_ungated": ("SEEN · UNGATED", "review"),
+            "pending": ("PENDING RELEASE", "review"),
+            "stale": ("STALE GATE", "muted"),
+        }
+        chips = []
+        for key, lab in (
+            ("live", "Live"),
+            ("seen_ungated", "Seen ungated"),
+            ("pending", "Pending"),
+            ("stale", "Stale"),
+        ):
+            n = int(cov_counts.get(key) or 0)
+            if n:
+                chips.append(f"<span class='cov-chip'>{_esc(lab)} · {n}</span>")
+        chip_line = " ".join(chips) if chips else ""
+        last_lab = cov.get("last_pass_label")
+        last_bit = (
+            f"<p class='muted'>Last ship-cleared · {_esc(last_lab)}</p>"
+            if last_lab
+            else "<p class='muted'>No ship-cleared PASS in ledger yet — suite paths show as pending.</p>"
+        )
+        claim = cov.get("claim") or ""
+        crow = []
+        for r in cov.get("rows") or []:
+            st = str(r.get("state") or "")
+            lab, cls = state_label.get(st, (st.upper() or "—", "muted"))
+            name = str(r.get("name") or "")
+            rid = str(r.get("id") or "")
+            name_html = (
+                f'<div class="why">{_esc(name)}</div>'
+                if name and name != rid
+                else ""
+            )
+            crow.append(
+                "<tr>"
+                f"<td class='{cls}'>{_esc(lab)}</td>"
+                f"<td><strong>{_esc(rid)}</strong>"
+                f"{name_html}"
+                f"<div class=\"muted\">{_esc(r.get('note') or '')}</div></td>"
+                "</tr>"
+            )
+        cov_h2 = "2 · Coverage · Live vs Pending" if dual_jobs else "Coverage · Live vs Pending"
+        coverage_html = f"""
+    <section class="coverage">
+      <h2>{cov_h2}</h2>
+      <p class="lead">{_esc(claim)}</p>
+      <p class="cov-chips">{chip_line}</p>
+      {last_bit}
+      <table>
+        <thead><tr><th>State</th><th>Path</th></tr></thead>
+        <tbody>{''.join(crow)}</tbody>
+      </table>
+      <p class="muted" style="margin-top:0.65rem">
+        Live = under last ship-cleared gate (not streaming prod).
+        Seen ungated = export fuel to author.
+        Pending = authored, not yet on that PASS surface.
+        Stale = on last PASS, absent from recent export.
+        Not continuous monitoring.
+      </p>
     </section>"""
 
     paths_html = f"""
@@ -975,9 +1353,10 @@ def center_to_html(model: dict[str, Any]) -> str:
                 f"</td>"
                 "</tr>"
             )
+        author_h2 = "1 · Author next" if dual_jobs else "Author next"
         plan_html = f"""
     <section class="intake">
-      <h2>Author next</h2>
+      <h2>{author_h2}</h2>
       <p class="muted">From your export — suggestions only; you own the suite bar. Paths already in the suite are omitted.</p>
       <table>
         <thead><tr><th>Sev</th><th>Candidate path</th></tr></thead>
@@ -987,9 +1366,10 @@ def center_to_html(model: dict[str, Any]) -> str:
       <pre>{_esc(cmds.get('ingest') or '')}</pre>
     </section>"""
     elif model.get("ingest"):
-        plan_html = """
+        author_h2 = "1 · Author next" if dual_jobs else "Author next"
+        plan_html = f"""
     <section class="intake">
-      <h2>Author next</h2>
+      <h2>{author_h2}</h2>
       <p class="muted">Ingest plan loaded — every suggested path is already in the suite (or no authoring gaps).</p>
     </section>"""
 
@@ -1019,7 +1399,7 @@ def center_to_html(model: dict[str, Any]) -> str:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Still-ship Center · {page_title}</title>
+  <title>RuntimeAI Control Center — Overview · {page_title}</title>
   <style>
     :root {{
       --ink: #1c1917; --muted: #57534e; --line: #d6d3d1; --paper: #fafaf9;
@@ -1032,9 +1412,16 @@ def center_to_html(model: dict[str, Any]) -> str:
       font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     }}
     .wrap {{ max-width: 52rem; margin: 0 auto; padding: 1.5rem 1.25rem 3rem; }}
-    header {{
-      font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase;
-      color: var(--muted); margin-bottom: 1rem;
+    header.brand {{
+      margin-bottom: 1rem;
+    }}
+    header.brand .brand-title {{
+      font-size: 1.15rem; font-weight: 700; letter-spacing: -0.01em;
+      color: var(--ink); text-transform: none;
+    }}
+    header.brand .brand-sub {{
+      margin-top: 0.2rem; font-size: 0.85rem; color: var(--muted);
+      letter-spacing: 0.02em;
     }}
     .hero {{
       background: var(--card); border: 1px solid var(--line);
@@ -1064,6 +1451,21 @@ def center_to_html(model: dict[str, Any]) -> str:
     section.next {{ border-color: #a8a29e; }}
     section.memory .lead, section.fleet .lead {{ margin: 0 0 0.35rem; font-weight: 600; }}
     section.intake {{ border-style: dashed; }}
+    section.export-jobs {{ border-color: #0f766e; background: #f0fdfa; }}
+    section.export-jobs .lead {{ margin: 0 0 0.35rem; font-size: 0.95rem; line-height: 1.5; }}
+    section.export-jobs .fuel-quote {{
+      margin: 0.45rem 0; padding: 0.45rem 0.55rem; background: #fff;
+      border-left: 3px solid #0f766e; font-size: 0.9rem; color: #1c1917;
+    }}
+    section.export-jobs .fuel-how,
+    section.export-jobs .fuel-gives {{ margin: 0.4rem 0 0; font-size: 0.9rem; line-height: 1.45; }}
+    section.coverage {{ border-color: #0f766e; }}
+    section.coverage .lead {{ margin: 0 0 0.45rem; font-size: 0.95rem; }}
+    .cov-chips {{ margin: 0 0 0.5rem; display: flex; flex-wrap: wrap; gap: 0.35rem; }}
+    .cov-chip {{
+      display: inline-block; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em;
+      padding: 0.2rem 0.45rem; background: #f0fdfa; color: #0f766e; border: 1px solid #99f6e4;
+    }}
     section.fleet {{ border-color: #a8a29e; }}
     h2 {{
       font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase;
@@ -1110,7 +1512,10 @@ def center_to_html(model: dict[str, Any]) -> str:
 </head>
 <body>
   <div class="wrap">
-    <header>RuntimeAI · still-ship Center · local control surface</header>
+    <header class="brand">
+      <div class="brand-title">RuntimeAI Control Center — Overview</div>
+      <div class="brand-sub">Still Trust / Ship</div>
+    </header>
     {fleet_html}
     {decision_note}
     {focus_label}
@@ -1132,13 +1537,15 @@ def center_to_html(model: dict[str, Any]) -> str:
       </p>
     </div>
     {compare_html}
-    {paths_html}
+    {export_jobs_html}
     {plan_html}
+    {coverage_html}
     {next_html}
+    {paths_html}
     {history_html}
     <footer>
       <p>Local artifact — not RuntimeAI Cloud. Same files as <code>decisions/</code> + suite YAML.</p>
-      <p>CI owns ship/stop per suite. Center is the cockpit (fleet register is advisory). · vantage-core {_esc(model.get('renderer_version'))} · {_esc(model.get('rendered_at'))}</p>
+      <p>CI owns ship/stop per suite. Control Center is the cockpit (fleet register is advisory). · vantage-core {_esc(model.get('renderer_version'))} · {_esc(model.get('rendered_at'))}</p>
     </footer>
   </div>
 </body>

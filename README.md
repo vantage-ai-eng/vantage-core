@@ -10,7 +10,7 @@ Opik / Braintrust / LangSmith experiment or trace UI. Observability inspects; Va
 Ingest from their telemetry/exports (`ingest` → path plans + optional drafts); plug into CI;
 return the verdict.
 
-**Version:** 0.1.13 — still-ship Center (cockpit) + fleet register · 0.1.12 metered cost/latency ceilings
+**Version:** 0.1.15 — Control Center demo in the wheel · 0.1.14 Coverage · 0.1.13 Center + fleet · 0.1.12 metered cost/latency
 
 Partner authoring: [CI · your suite](https://www.vantageai.cc/runtimeai/method/cicd#rai-cicd-custom-fixtures)
 
@@ -35,26 +35,34 @@ Requires `OPENROUTER_API_KEY` (BYOK) for live model runs. Live runs fail loudly 
 
 ## Stranger path (under 30 min)
 
-**A — Saved-example demo (no API key, offline, no editing)**
+**A — Interactive Control Center (no API key — recommended)**
+
+```bash
+pip install vantage-core
+vantage-core demo --interactive
+# same: vantage-core center --demo
+# → http://127.0.0.1:8767/  · beats 1–7 · Center panel refreshes after each beat
+```
+
+Bundled with the package: fixtures, sample Obs exports, fleet sim, report samples. No clone required.
+
+**Offline CLI talk track (no browser)**
 
 ```bash
 vantage-core demo --save decisions/
 vantage-core report "$(vantage-core decisions latest)" --html decisions/suite.html
 vantage-core center --decisions decisions/ --html decisions/center.html
-# open decisions/center.html — still-ship Center (management); suite.html is the scorecard memo
+# open decisions/center.html — Control Center (management); suite.html is the scorecard memo
 # no RuntimeAI account
 ```
 
-**Interactive control surface (browser — recommended for demos)**
+Offline CLI talk track (no key) prints the silent-miss SAY lines **and Coverage** (Live / Seen ungated from a sample LangSmith export):
 
 ```bash
-vantage-core demo --interactive
-# → http://127.0.0.1:8767/  · click beats: last ship → after change → fleet
-# Center panel refreshes after each beat (not CLI-only)
+vantage-core demo --offline
 ```
 
-Reads the **SAY:** lines out loud. Shows last-ship PASS → after-change BLOCK (mean still clears the bar; path policy blocks) → the PR comment.
-`--save` writes the before/after JSON even without an API key.
+`--save` writes before/after JSON, sample ingest plan, and `center.html` with Coverage even without an API key.
 Needs a key only for a live model run: `vantage-core demo --live`.
 
 Clone of this repo also has the same fixtures under [`examples/decisions/`](examples/decisions/).
@@ -221,7 +229,9 @@ vantage-core report decisions/suite.json --pdf decisions/suite.pdf    # optional
 
 Open the HTML in a browser (or the PDF). Footer states **local artifact — not RuntimeAI Cloud history**. Hosted multi-owner history is not built.
 
-## Still-ship Center (management lens)
+## RuntimeAI Control Center (management lens)
+
+**See it (no key):** `vantage-core demo --interactive` or `vantage-core center --demo` → browser at `:8767`.
 
 One local HTML surface for suite · bar · last motion · path blockers · bind — not N scripts, not a hosted dashboard:
 
@@ -398,9 +408,18 @@ Then edit drafts → `suite run` / `suite rerun --baseline`.
 See `examples/ingest/README.md`.
 FAQ: https://www.vantageai.cc/runtimeai/faq#rai-faq-accelerate-authoring
 
+## Changelog (0.1.15)
+
+- **Control Center demo in the wheel** — `pip install vantage-core` then `vantage-core demo --interactive` (or `center --demo`) runs the full browser walkthrough: fixtures, Obs samples, fleet sim, report samples. No monorepo clone. Naming: **RuntimeAI Control Center**.
+- **Coverage** (from 0.1.14) — Live / Seen ungated / Pending / Stale on partner exports. `demo --interactive` / `demo --offline` mirror **0.1.15**.
+
+## Changelog (0.1.14)
+
+- **Coverage** — Center reads their existing tools. Ingest a LangSmith / Braintrust export; the cockpit shows **Live** (on last ship-cleared PASS) / **Seen ungated** (in the export, not in the suite) / **Pending** (authored, not yet on that PASS) / **Stale** (on last PASS, absent from recent export). Packaged sample export so `pip install` can demo it. Not monitoring, not OAuth, not a trace UI.
+
 ## Changelog (0.1.13)
 
-- **Still-ship Center** — local control surface (`vantage-core center` / `demo --interactive`). CI is the brake; Center is the cockpit: ship / still-trust verdict, what blocks, path register (`why` + `priority:`), bar, bind, vs last ship, motion history, one primary next, author-next ingest panel. Fleet register across `suites/*.suite.yaml` is advisory only. Offline HTML — not a Cloud dashboard. `--save` and CI stubs refresh/upload `center.html`.
+- **RuntimeAI Control Center** — local control surface (`vantage-core center` / `demo --interactive`). CI is the brake; Control Center is the cockpit: ship / still-trust verdict, what blocks, path register (`why` + `priority:`), bar, bind, vs last ship, motion history, one primary next, author-next ingest panel. Fleet register across `suites/*.suite.yaml` is advisory only. Offline HTML — not a Cloud dashboard. `--save` and CI stubs refresh/upload `center.html`.
 
 ## Changelog (0.1.12)
 

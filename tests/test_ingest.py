@@ -8,6 +8,7 @@ from pathlib import Path
 from vantage_core.cli import main
 from vantage_core.ingest import (
     analyze_export,
+    detect_export_shape,
     draft_contract_yaml,
     format_suggestions,
     load_export,
@@ -17,6 +18,16 @@ from vantage_core.ingest import (
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "examples" / "ingest" / "langsmith_export_sample.json"
+BT_FIXTURE = ROOT / "examples" / "ingest" / "braintrust_export_sample.json"
+
+
+def test_detect_export_shape_langsmith_and_braintrust():
+    ls = detect_export_shape(load_export(FIXTURE))
+    assert ls["tool"] == "langsmith"
+    assert "LangSmith" in ls["label"]
+    bt = detect_export_shape(load_export(BT_FIXTURE))
+    assert bt["tool"] == "braintrust"
+    assert "Braintrust" in bt["label"]
 
 
 def test_analyze_export_ranks_with_evidence_and_priors():
@@ -24,6 +35,8 @@ def test_analyze_export_ranks_with_evidence_and_priors():
     report = analyze_export(data)
     assert report["method"].startswith("extract")
     assert report["run_count"] == 4
+    assert report.get("shape", {}).get("tool") == "langsmith"
+    assert report.get("sample_quote")
     suggestions = report["suggestions"]
     slugs = {s["slug"] for s in suggestions}
     assert "refuse_pii" in slugs

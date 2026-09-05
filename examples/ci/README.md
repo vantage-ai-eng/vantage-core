@@ -1,9 +1,9 @@
-# Still-trust CI stubs (vantage-core 0.1.13)
+# Still-trust CI stubs (vantage-core 0.1.15)
 
 Required-check workflows that **re-decide vs last ship**, not a one-shot `suite run`.
 PR/push uses `--trigger change`. A weekly schedule uses `--trigger cadence`
 (the catch for silent same-id change — not observation of it).
-They also emit a **human HTML/PDF memo** and the **still-ship Center** as CI artifacts (not a Cloud dashboard).
+They also emit a **human HTML/PDF memo** and the **Control Center** as CI artifacts (not a Cloud dashboard).
 
 ```bash
 vantage-core ci stub github    # → .github/workflows/vantage-core-suite-gate.yml

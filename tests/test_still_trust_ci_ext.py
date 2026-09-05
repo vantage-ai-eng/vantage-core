@@ -231,14 +231,23 @@ def test_demo_offline_talk_track(capsys):
     assert "7.3" in out and "7.0" in out
     assert "all_must_pass blocks on the cite path" in out
     assert "mean 7.3 clears fail_under 7.0" in out
+    assert "COVERAGE" in out
+    assert "Obs shows what ran" in out
+    assert "Mirrors vantage-core" in out
+    assert "0.1.15" in out
 
 
 def test_demo_offline_save_writes_json_for_report(tmp_path, capsys):
     dest = tmp_path / "decisions"
     code = main(["demo", "--offline", "--save", str(dest)])
     assert code == 0
-    files = sorted(dest.glob("*.json"))
+    files = sorted(
+        p for p in dest.glob("*.json") if not p.name.startswith("ingest")
+    )
     assert len(files) == 2
+    assert (dest / "ingest-demo.json").is_file() or any(
+        p.name.startswith("ingest") for p in dest.glob("*.json")
+    )
     err = capsys.readouterr().err
     assert "saved" in err
     latest = max(files, key=lambda p: p.name)
@@ -247,6 +256,9 @@ def test_demo_offline_save_writes_json_for_report(tmp_path, capsys):
     text = html.read_text(encoding="utf-8")
     assert "BLOCK" in text or "FAIL" in text
     assert "runtimeai.decision/v1" in text
+    center = dest / "center.html"
+    assert center.is_file()
+    assert "Coverage" in center.read_text(encoding="utf-8")
     assert "Local artifact" in text
     assert "cite" in text.lower() or "REGRESSION" in text or "baseline" in text.lower()
 

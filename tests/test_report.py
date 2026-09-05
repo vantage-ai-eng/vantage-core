@@ -93,7 +93,34 @@ def test_cli_report_suite_compare_to_baseline(tmp_path):
     pdf = pdf_path.read_bytes()
     assert pdf.startswith(b"%PDF")
     assert b"%%EOF" in pdf
-    assert b"Local artifact" in pdf or b"not RuntimeAI Cloud" in pdf
+    # Minimal engine embeds ASCII; Chrome print may compress streams.
+    assert (
+        b"Local artifact" in pdf
+        or b"not RuntimeAI Cloud" in pdf
+        or len(pdf) > 8_000  # elaborate HTML scorecard print
+    )
+
+
+def test_pdf_prefers_html_scorecard_when_chrome_available(tmp_path, monkeypatch):
+    from vantage_core.report import (
+        _chrome_candidates,
+        _decision_to_pdf_minimal,
+        decision_to_pdf_bytes,
+    )
+
+    after = json.loads(AFTER.read_text(encoding="utf-8"))
+    before = json.loads(BEFORE.read_text(encoding="utf-8"))
+    attach_baseline_compare(after, before, baseline_path=BEFORE)
+    monkeypatch.delenv("VANTAGE_PDF_ENGINE", raising=False)
+    pdf = decision_to_pdf_bytes(after)
+    assert pdf.startswith(b"%PDF")
+    if _chrome_candidates():
+        minimal = _decision_to_pdf_minimal(after)
+        # Chrome print of the full scorecard is typically much larger
+        assert len(pdf) > len(minimal)
+        assert len(pdf) > 8_000
+    else:
+        assert b"Local artifact" in pdf or b"BLOCK" in pdf
 
 
 def test_cli_report_invalid_json(tmp_path, capsys):

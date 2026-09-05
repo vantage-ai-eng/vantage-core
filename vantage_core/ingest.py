@@ -24,6 +24,53 @@ def load_export(path: str | Path) -> Any:
     return json.loads(p.read_text(encoding="utf-8"))
 
 
+def detect_export_shape(data: Any) -> dict[str, Any]:
+    """Name the tool-shaped dump so partners recognize what they already have."""
+    schema = ""
+    project = ""
+    container = ""
+    if isinstance(data, dict):
+        schema = str(data.get("schema") or "")
+        project = str(data.get("project") or data.get("name") or "")
+        for key in (
+            "runs",
+            "trace_runs",
+            "events",
+            "rows",
+            "records",
+            "items",
+            "data",
+            "results",
+        ):
+            if isinstance(data.get(key), list):
+                container = key
+                break
+    elif isinstance(data, list):
+        container = "list"
+
+    tool = "generic"
+    label = "JSON export (run-like rows)"
+    hint = "Any JSON with runs / events / rows — drop the file next to your repo."
+    schema_l = schema.lower()
+    if "langsmith" in schema_l or container in ("runs", "trace_runs"):
+        tool = "langsmith"
+        label = "LangSmith-shaped"
+        hint = "Looks like a LangSmith runs export (`runs` array). Export from your project UI or API."
+    elif "braintrust" in schema_l or container in ("events", "rows", "records"):
+        tool = "braintrust"
+        label = "Braintrust-shaped"
+        hint = "Looks like a Braintrust events/rows export. Export from the experiment UI or API."
+
+    return {
+        "tool": tool,
+        "label": label,
+        "hint": hint,
+        "schema": schema or None,
+        "container": container or None,
+        "project": project or None,
+    }
+
+
 def _iter_runs(data: Any) -> list[dict[str, Any]]:
     """Collect run-like dicts from LangSmith / Braintrust / similar export shapes."""
     if isinstance(data, list):
@@ -341,8 +388,17 @@ def analyze_export(data: Any, *, limit: int = 5) -> dict[str, Any]:
             if len(suggestions) >= limit:
                 break
 
+    shape = detect_export_shape(data)
+    # Prefer first user-shaped quote partners will recognize from their own tools
+    sample_quote = ""
+    for ev in evidence:
+        q = (ev.get("user") or "").strip()
+        if q:
+            sample_quote = q[:160]
+            break
+
     return {
-        "project": project or None,
+        "project": project or shape.get("project") or None,
         "run_count": len(evidence),
         "suggestions": suggestions,
         "coverage_gaps": gaps[:3],
@@ -351,6 +407,8 @@ def analyze_export(data: Any, *, limit: int = 5) -> dict[str, Any]:
             "drafts are suggestions; partner owns the suite; not OAuth; not a trace UI"
         ),
         "method": "extract→prior-detectors→rank→draft",
+        "shape": shape,
+        "sample_quote": sample_quote or None,
     }
 
 

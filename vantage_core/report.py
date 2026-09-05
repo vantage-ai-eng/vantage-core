@@ -1,13 +1,22 @@
 """Human scorecard memo from runtimeai.decision/v1 — HTML (and optional PDF).
 
 Offline. No RuntimeAI account. Not Cloud history — a local / CI artifact.
+
+PDF prefers a print of the HTML scorecard (headless Chrome/Chromium) so CI and
+demo share the same elaborate memo. Falls back to a minimal Helvetica PDF when
+no browser is available.
 """
 
 from __future__ import annotations
 
 import html
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from vantage_core import SCHEMA_ID, __version__
@@ -389,10 +398,19 @@ def decision_to_html(decision: dict[str, Any]) -> str:
       margin-top: 2rem; padding-top: 0.85rem; border-top: 1px solid var(--line);
       color: var(--muted); font-size: 0.78rem;
     }}
+    @page {{ size: letter; margin: 0.55in; }}
     @media print {{
       body {{ background: #fff; }}
-      .hero, .wrap {{ border: none; padding: 0; }}
-      .badge {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+      .wrap {{ max-width: none; margin: 0; padding: 0; }}
+      .hero {{
+        border: 1px solid var(--line); break-inside: avoid;
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+      }}
+      .badge, .axis-track i, .axis-track {{
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+      }}
+      section {{ break-inside: avoid; }}
+      a {{ color: inherit; text-decoration: none; }}
     }}
   </style>
 </head>
@@ -451,8 +469,101 @@ def _wrap_words(text: str, width: int) -> list[str]:
     return lines
 
 
-def decision_to_pdf_bytes(decision: dict[str, Any]) -> bytes:
-    """Minimal Helvetica PDF — no extra deps. Good enough for a CI memo."""
+def _chrome_candidates() -> list[str]:
+    env = (os.environ.get("VANTAGE_CHROME_PATH") or os.environ.get("CHROME_PATH") or "").strip()
+    named = [
+        env,
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium-browser",
+        "chrome",
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "/usr/bin/google-chrome",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+    ]
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in named:
+        if not raw or raw in seen:
+            continue
+        seen.add(raw)
+        if os.path.isfile(raw) and os.access(raw, os.X_OK):
+            out.append(raw)
+            continue
+        found = shutil.which(raw)
+        if found and found not in seen:
+            seen.add(found)
+            out.append(found)
+    return out
+
+
+def _html_scorecard_to_pdf_via_chrome(html_doc: str) -> bytes | None:
+    """Print the HTML scorecard to PDF with headless Chrome/Chromium."""
+    browsers = _chrome_candidates()
+    if not browsers:
+        return None
+    with tempfile.TemporaryDirectory(prefix="vantage-scorecard-") as tmp:
+        tmp_path = Path(tmp)
+        html_path = tmp_path / "suite.html"
+        pdf_path = tmp_path / "suite.pdf"
+        html_path.write_text(html_doc, encoding="utf-8")
+        # file:// URL — Chrome prints local HTML without a server
+        uri = html_path.resolve().as_uri()
+        for browser in browsers:
+            try:
+                proc = subprocess.run(
+                    [
+                        browser,
+                        "--headless=new",
+                        "--disable-gpu",
+                        "--no-pdf-header-footer",
+                        "--no-first-run",
+                        "--no-default-browser-check",
+                        "--allow-file-access-from-files",
+                        f"--print-to-pdf={pdf_path}",
+                        uri,
+                    ],
+                    capture_output=True,
+                    timeout=45,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            if pdf_path.is_file() and pdf_path.stat().st_size > 500:
+                data = pdf_path.read_bytes()
+                if data.startswith(b"%PDF"):
+                    return data
+            # Older Chrome: --headless without =new
+            if proc.returncode != 0:
+                try:
+                    proc2 = subprocess.run(
+                        [
+                            browser,
+                            "--headless",
+                            "--disable-gpu",
+                            "--no-pdf-header-footer",
+                            f"--print-to-pdf={pdf_path}",
+                            uri,
+                        ],
+                        capture_output=True,
+                        timeout=45,
+                        check=False,
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    continue
+                if pdf_path.is_file() and pdf_path.stat().st_size > 500:
+                    data = pdf_path.read_bytes()
+                    if data.startswith(b"%PDF"):
+                        return data
+                _ = proc2  # silence unused in some branches
+    return None
+
+
+def _decision_to_pdf_minimal(decision: dict[str, Any]) -> bytes:
+    """Minimal Helvetica PDF — zero deps; used when no Chrome is available."""
     m = extract_report_model(decision)
     lines: list[tuple[str, int, bool]] = []  # text, size, bold
 
@@ -517,9 +628,17 @@ def decision_to_pdf_bytes(decision: dict[str, Any]) -> bytes:
             add(f"improved  {x}")
         add("")
     add("FOOTER", size=9, bold=True)
-    add(f"{m['schema']}  integrity {m['integrity'][:16]}..." if m["integrity"] else m["schema"], size=9)
+    add(
+        f"{m['schema']}  integrity {m['integrity'][:16]}..."
+        if m["integrity"]
+        else m["schema"],
+        size=9,
+    )
     add("Local artifact - not RuntimeAI Cloud history.", size=9)
-    add("Same rubrics as the Simulator scorecard. Lives in your CI, not a hosted dashboard.", size=9)
+    add(
+        "Same rubrics as the Simulator scorecard. Lives in your CI, not a hosted dashboard.",
+        size=9,
+    )
 
     # Paginate into content streams
     page_h = 792.0
@@ -540,7 +659,9 @@ def decision_to_pdf_bytes(decision: dict[str, Any]) -> bytes:
             new_page()
         font = "F2" if bold else "F1"
         safe = _pdf_escape(text)
-        pages[-1].append(f"BT /{font} {size} Tf {margin:.1f} {y - size:.1f} Td ({safe}) Tj ET")
+        pages[-1].append(
+            f"BT /{font} {size} Tf {margin:.1f} {y - size:.1f} Td ({safe}) Tj ET"
+        )
         y -= leading
 
     n = len(pages)
@@ -550,8 +671,14 @@ def decision_to_pdf_bytes(decision: dict[str, Any]) -> bytes:
     body_objs: list[tuple[int, str]] = [
         (1, "<< /Type /Catalog /Pages 2 0 R >>"),
         (2, f"<< /Type /Pages /Kids [{kids}] /Count {n} >>"),
-        (3, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"),
-        (4, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>"),
+        (
+            3,
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+        ),
+        (
+            4,
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
+        ),
     ]
     for i, ops in enumerate(pages):
         stream = "\n".join(ops).encode("latin-1")
@@ -586,3 +713,24 @@ def decision_to_pdf_bytes(decision: dict[str, Any]) -> bytes:
         f"trailer\n<< /Size {count} /Root 1 0 R >>\nstartxref\n{pos}\n%%EOF\n"
     ).encode("latin-1")
     return b"".join(chunks) + xref_bytes + trailer
+
+
+def decision_to_pdf_bytes(decision: dict[str, Any]) -> bytes:
+    """Elaborate HTML scorecard as PDF when Chrome is available; else minimal PDF.
+
+    Prefer printing ``decision_to_html`` so the PDF matches the product memo
+    (same layout CI and the demo HTML tab show). Set ``VANTAGE_PDF_ENGINE=minimal``
+    to force the zero-dep fallback, or ``chrome`` to require browser print.
+    """
+    engine = (os.environ.get("VANTAGE_PDF_ENGINE") or "auto").strip().lower()
+    html_doc = decision_to_html(decision)
+    if engine in ("auto", "chrome", "html"):
+        printed = _html_scorecard_to_pdf_via_chrome(html_doc)
+        if printed is not None:
+            return printed
+        if engine in ("chrome", "html"):
+            raise RuntimeError(
+                "VANTAGE_PDF_ENGINE=chrome but no Chrome/Chromium found "
+                "(set VANTAGE_CHROME_PATH, or use VANTAGE_PDF_ENGINE=minimal)"
+            )
+    return _decision_to_pdf_minimal(decision)
