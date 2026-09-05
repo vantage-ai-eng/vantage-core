@@ -430,7 +430,7 @@ def test_demo_offline_prints_coverage(capsys):
     out = capsys.readouterr().out
     assert "SAVED-EXAMPLE DEMO" in out
     assert "Mirrors vantage-core" in out
-    assert "0.1.15" in out
+    assert "0.1.16" in out
     assert "COVERAGE" in out
     assert "Obs shows what ran" in out
     assert "Seen ungated" in out or "Live (gated" in out
@@ -663,13 +663,18 @@ def test_interactive_http_beat_api(tmp_path):
         with urlopen("http://127.0.0.1:18768/", timeout=3) as resp:
             page = resp.read().decode("utf-8")
         assert "RuntimeAI Control Center" in page
-        assert "easy visibility" in page.lower() or "obscure" in page.lower() or "Still Trust" in page
-        assert "Portable" in page or "Why this exists" in page or "Secure" in page
+        assert "Still Trust" in page or "easy visibility" in page.lower()
+        assert "This is a demo" in page
+        assert "sample fixtures" in page.lower() or "Interactive demo" in page
         assert "langsmith_export_sample" in page
         assert "braintrust_export_sample" in page
         assert "Peek sample exports" in page
-        assert "Mirrors" in page
-        assert "0.1.15" in page
+        assert "Demo" in page
+        assert "DEMO ·" in page
+        assert "0.1.16" in page
+        assert "Interactive demo" in page
+        assert "demo-banner" in page
+        assert "Mirrors" not in page
         req7 = Request(
             "http://127.0.0.1:18768/api/beat/7",
             data=b"",

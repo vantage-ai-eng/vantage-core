@@ -684,7 +684,7 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>RuntimeAI Control Center — Overview · {_CORE_VERSION}</title>
+  <title>RuntimeAI Control Center · Demo · {_CORE_VERSION}</title>
   <style>
     :root {{
       --ink: #1c1917; --muted: #57534e; --line: #d6d3d1; --paper: #fafaf9;
@@ -695,6 +695,15 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
       margin: 0; background: var(--paper); color: var(--ink);
       font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
       height: 100vh; display: flex; flex-direction: column;
+    }}
+    .demo-banner {{
+      padding: 0.4rem 1.25rem; background: #0f766e; color: #ecfdf5;
+      font-size: 0.78rem; font-weight: 650; letter-spacing: 0.02em;
+      display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: baseline;
+      justify-content: space-between;
+    }}
+    .demo-banner code {{
+      font-size: 0.72rem; font-weight: 600; opacity: 0.92;
     }}
     header {{
       padding: 0.85rem 1.25rem; border-bottom: 1px solid var(--line); background: var(--card);
@@ -787,17 +796,21 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
   </style>
 </head>
 <body>
+  <div class="demo-banner" role="status">
+    <span>Interactive demo — sample fixtures, not your CI ledger</span>
+    <code>vantage-core demo --interactive</code>
+  </div>
   <header>
     <div>
-      <h1>RuntimeAI Control Center — Overview</h1>
-      <div class="kicker">Still Trust / Ship · easy visibility</div>
+      <h1>RuntimeAI Control Center · Demo</h1>
+      <div class="kicker">Still Trust / Ship · walkthrough of the real cockpit</div>
       <div class="sub">{VISIBILITY_GOAL} {PREFERRED_LINE}</div>
     </div>
-    <div class="ver">Mirrors {_CORE_VERSION}</div>
+    <div class="ver">DEMO · {_CORE_VERSION}</div>
   </header>
   <div class="layout">
     <aside>
-      <h2>Beats · {_CORE_VERSION}</h2>
+      <h2>Demo beats · {_CORE_VERSION}</h2>
       <button class="beat" data-beat="1" type="button">
         <strong>1 · Last ship</strong>
         <span>PASS · SHIP CLEAR</span>
@@ -827,10 +840,10 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
         <span>HTML · summary PDF · detailed PDF · JSON</span>
       </button>
       <div class="pillars">
-        <strong>Why this exists</strong>
-        <span>Telemetry today is hard to read · scattered · obscure</span>
-        <span>Center: Live / Seen ungated / Pending in one place</span>
-        <span>Portable · Secure · shareable report · one ledger</span>
+        <strong>This is a demo</strong>
+        <span>Packaged samples after <code>pip install vantage-core</code></span>
+        <span>Right panel = real Control Center HTML (same as CI artifact)</span>
+        <span>Your prod gate: suite run → decisions/center.html</span>
       </div>
       <div class="formats" id="formats" hidden>
         <strong>Report format</strong>
@@ -857,8 +870,8 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
       <p class="status" id="status"></p>
     </aside>
     <main>
-      <div class="bar">RuntimeAI Control Center · <code>decisions/center.html</code> · vantage-core {_CORE_VERSION}</div>
-      <iframe id="frame" title="RuntimeAI Control Center — Overview" src="/center.html"></iframe>
+      <div class="bar">Demo · Control Center · <code>decisions/center.html</code> · vantage-core {_CORE_VERSION}</div>
+      <iframe id="frame" title="RuntimeAI Control Center — Demo" src="/center.html"></iframe>
     </main>
   </div>
   <script>
@@ -883,7 +896,7 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
         json: "suite.json",
       }};
       if (bar) {{
-        bar.innerHTML = "Report · <code>" + (names[fmt] || fmt) +
+        bar.innerHTML = "Demo · Report · <code>" + (names[fmt] || fmt) +
           "</code> · vantage-core {_CORE_VERSION}";
       }}
     }}
@@ -938,7 +951,7 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
           frame.src = (map[view] || "/center.html") + "?t=" + Date.now();
           const bar = document.querySelector("main .bar");
           if (bar) {{
-            bar.innerHTML = "RuntimeAI Control Center · <code>decisions/center.html</code> · vantage-core {_CORE_VERSION}";
+            bar.innerHTML = "Demo · Control Center · <code>decisions/center.html</code> · vantage-core {_CORE_VERSION}";
           }}
         }}
       }} catch (e) {{
@@ -1104,8 +1117,8 @@ def run_interactive(
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Bound)
     url = f"http://127.0.0.1:{port}/"
-    print(f"RuntimeAI Control Center demo → {url}", flush=True)
-    print(f"mirrors vantage-core {_CORE_VERSION}", flush=True)
+    print(f"RuntimeAI Control Center · Demo → {url}", flush=True)
+    print(f"DEMO · vantage-core {_CORE_VERSION} · sample fixtures, not your ledger", flush=True)
     print(f"workdir {work}", flush=True)
     print("Beats: 1 last-ship · 2 after-change · 3 author+coverage · 4 pending · 5 live · 6 fleet · 7 proof", flush=True)
     print("Ctrl+C to stop.", flush=True)
