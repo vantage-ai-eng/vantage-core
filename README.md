@@ -10,7 +10,7 @@ Opik / Braintrust / LangSmith experiment or trace UI. Observability inspects; Va
 Ingest from their telemetry/exports (`ingest` → path plans + optional drafts); plug into CI;
 return the verdict.
 
-**Version:** 0.1.17 — Vantage blue on Center + demo · 0.1.16 DEMO chrome · 0.1.15 demo in wheel · 0.1.14 Coverage
+**Version:** 0.1.18 — Demo docs + Coverage Gap · 0.1.17 Vantage blue · 0.1.16 DEMO chrome · 0.1.15 demo in wheel
 
 Partner authoring: [CI · your suite](https://www.vantageai.cc/runtimeai/method/cicd#rai-cicd-custom-fixtures)
 
@@ -408,6 +408,10 @@ Then edit drafts → `suite run` / `suite rerun --baseline`.
 See `examples/ingest/README.md`.
 FAQ: https://www.vantageai.cc/runtimeai/faq#rai-faq-accelerate-authoring
 
+## Changelog (0.1.18)
+
+- Demo sample documents in the main panel; Coverage **Gap**; Live ≠ this-decision cue.
+
 ## Changelog (0.1.17)
 
 - **Vantage blue** — demo chrome and Control Center HTML use brand blue (`#1375d9`), not teal.
@@ -419,7 +423,7 @@ FAQ: https://www.vantageai.cc/runtimeai/faq#rai-faq-accelerate-authoring
 ## Changelog (0.1.15)
 
 - **Control Center demo in the wheel** — `pip install vantage-core` then `vantage-core demo --interactive` (or `center --demo`) runs the full browser walkthrough: fixtures, Obs samples, fleet sim, report samples. No monorepo clone. Naming: **RuntimeAI Control Center**.
-- **Coverage** (from 0.1.14) — Live / Seen ungated / Pending / Stale on partner exports. `demo --interactive` / `demo --offline` mirror **0.1.17**.
+- **Coverage** (from 0.1.14) — Live / Seen ungated / Pending / Stale on partner exports. `demo --interactive` / `demo --offline` mirror **0.1.18**.
 
 ## Changelog (0.1.14)
 

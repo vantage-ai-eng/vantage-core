@@ -287,7 +287,15 @@ def test_center_coverage_live_and_seen_ungated(tmp_path):
                 "evidence": [{"run_name": "sql_tool", "quote": "SELECT *"}],
             },
         ],
-        "coverage_gaps": [],
+        "coverage_gaps": [
+            {
+                "slug": "routing",
+                "name": "Route / handoff",
+                "severity": "medium",
+                "note": "No export evidence — still a common quiet-miss",
+                "starter": "05_routing.yaml",
+            }
+        ],
     }
     ingest_path = decisions / "ingest-cov.json"
     ingest_path.write_text(json.dumps(ingest, indent=2), encoding="utf-8")
@@ -312,10 +320,20 @@ def test_center_coverage_live_and_seen_ungated(tmp_path):
     assert "Coverage" in html
     assert "LIVE" in html
     assert "SEEN" in html and "UNGATED" in html
+    assert "GAP" in html
+    assert "routing" in html.lower() or "handoff" in html.lower()
+    assert "MEDIUM" in html or "medium" in html.lower()
+    assert "Live ≠ this decision" in html or "last ship-cleared PASS" in html
     assert "sql_safety" in html.lower() or "SQL safety" in html
     assert "Obs shows what ran" in html
     assert "which of those behaviors you already gate" in html
-    assert "Author the next path" in html or "seen, ungated" in html.lower()
+    assert (
+        "Author the next path" in html
+        or "seen, ungated" in html.lower()
+        or "coverage gap" in html.lower()
+    )
+    # Demo-friendly suite ref (not an absolute /Users/... path)
+    assert "/Users/" not in html
 
 
 def test_center_coverage_pending_release(tmp_path):
@@ -371,15 +389,25 @@ def test_demo_coverage_beats(tmp_path):
     html4 = Path(r4["center"]).read_text(encoding="utf-8")
     assert "Coverage" in html4
     assert "SEEN" in html4 or "UNGATED" in html4 or "sql_safety" in html4.lower()
+    assert "GAP" in html4
+    assert "Live ≠ this decision" in html4 or "not this decision" in html4.lower()
+    assert r4.get("docs")  # draft docs listed after beat 3
+    assert r4.get("fuel") is None  # Center already shows export fuel
 
     r5 = beat_pending_release(tmp_path)
     html5 = Path(r5["center"]).read_text(encoding="utf-8")
     assert "PENDING" in html5
+    assert "sample.acme_sql_safety_v1" in html5 or "acme_sql_safety" in html5
 
     r6 = beat_pending_cleared_live(tmp_path)
     html6 = Path(r6["center"]).read_text(encoding="utf-8")
     assert "Coverage" in html6
     assert "LIVE" in html6
+    assert "sample.acme_sql_safety_v1" in html6 or "acme_sql_safety" in html6
+    assert "Acme — SQL safety" in html6
+    # Pending-flavored why must not linger on the Live surface
+    assert "authored, not yet ship-cleared" not in html6.lower()
+    assert "coverage gap" in html6.lower() or "Author a coverage gap" in html6
 
 
 def test_discover_helpers(tmp_path):
@@ -430,7 +458,7 @@ def test_demo_offline_prints_coverage(capsys):
     out = capsys.readouterr().out
     assert "SAVED-EXAMPLE DEMO" in out
     assert "Mirrors vantage-core" in out
-    assert "0.1.17" in out
+    assert "0.1.18" in out
     assert "COVERAGE" in out
     assert "Obs shows what ran" in out
     assert "Seen ungated" in out or "Live (gated" in out
@@ -618,7 +646,8 @@ def test_interactive_beats_update_center(tmp_path):
     assert "Same export" in html3 or "Author next" in html3 or "What you already have" in html3
     assert "LangSmith" in html3 or "What you already have" in html3
     assert r3.get("drafts", 0) >= 1
-    assert r3.get("fuel", {}).get("label")
+    assert r3.get("fuel") is None  # Center already shows export fuel; sidebar stays selection-only
+    assert r3.get("docs")
     assert list((tmp_path / "contracts_drafts").glob("*.draft.yaml"))
 
     r4 = beat_pending_release(tmp_path)
@@ -668,12 +697,18 @@ def test_interactive_http_beat_api(tmp_path):
         assert "sample fixtures" in page.lower() or "Interactive demo" in page
         assert "langsmith_export_sample" in page
         assert "braintrust_export_sample" in page
-        assert "Peek sample exports" in page
         assert "Demo" in page
         assert "DEMO ·" in page
-        assert "0.1.17" in page
+        assert "0.1.18" in page
         assert "Interactive demo" in page
         assert "demo-banner" in page
+        assert "thesis-panel" in page
+        assert "thesis-toggle" in page
+        assert "Sample documents" in page
+        assert "doc-select" in page
+        assert "demo.suite.yaml" in page
+        assert "Open in main panel" in page
+        assert "easy ship visibility" in page.lower() or "easy visibility" in page.lower()
         assert "Mirrors" not in page
         req7 = Request(
             "http://127.0.0.1:18768/api/beat/7",

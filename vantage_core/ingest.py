@@ -348,11 +348,13 @@ def analyze_export(data: Any, *, limit: int = 5) -> dict[str, Any]:
         {
             "slug": p["slug"],
             "name": p["name"],
+            "severity": p.get("severity"),
             "note": "No export evidence — still a common quiet-miss; consider authoring from starter.",
             "starter": p.get("starter"),
         }
         for p in PRIORS
-        if p["slug"] not in seen and p.get("severity") in ("critical", "high")
+        if p["slug"] not in seen
+        and p.get("severity") in ("critical", "high", "medium")
     ]
 
     # Fallback: unnamed clusters from distinct failing run names

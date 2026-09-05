@@ -1,4 +1,4 @@
-# Still-trust CI stubs (vantage-core 0.1.17)
+# Still-trust CI stubs (vantage-core 0.1.18)
 
 Required-check workflows that **re-decide vs last ship**, not a one-shot `suite run`.
 PR/push uses `--trigger change`. A weekly schedule uses `--trigger cadence`

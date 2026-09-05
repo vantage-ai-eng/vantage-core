@@ -131,7 +131,7 @@ def _decision(
     obj = {
         "schema": "runtimeai.decision/v1",
         "generated_at": _iso(when),
-        "runner": {"name": "vantage-core", "version": "0.1.17"},
+        "runner": {"name": "vantage-core", "version": "0.1.18"},
         "contract": {
             "scenario_id": "sample.acme_fleet_v1",
             "scenario_sha256": None,

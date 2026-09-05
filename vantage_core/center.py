@@ -214,6 +214,23 @@ def _authored_path_keys(suite: Any | None, report_paths: list[dict[str, Any]]) -
     return keys
 
 
+def _cli_suite_ref(suite_path: Path | None) -> str:
+    """Short, copy-pasteable suite ref for Primary next (avoid absolute machine paths)."""
+    if suite_path is None:
+        return "suites/starter.suite.yaml"
+    sp = Path(suite_path)
+    name = sp.name
+    if name in ("demo.suite.yaml", "starter.suite.yaml"):
+        return name
+    if name == "pending_demo.suite.yaml":
+        return "suites/pending_demo.suite.yaml"
+    try:
+        rel = sp.resolve().relative_to(Path.cwd().resolve())
+        return str(rel)
+    except ValueError:
+        return name
+
+
 def _normalize_ingest(payload: dict[str, Any]) -> dict[str, Any]:
     """Accept raw analyze_export output or CLI ingest --json wrapper."""
     suggestions = payload.get("suggestions")
@@ -336,10 +353,12 @@ def _build_coverage(
 
         if on_live and has_ingest and not in_export:
             state = "stale"
-            note = "Gated on last ship — absent from recent export"
+            note = "On last ship-cleared PASS — absent from recent export"
         elif on_live:
             state = "live"
-            note = "On last ship-cleared decision (prod gate surface)"
+            note = (
+                "Last ship-cleared PASS (prod gate) — not this decision's PASS/FAIL"
+            )
         else:
             state = "pending"
             note = (
@@ -347,10 +366,22 @@ def _build_coverage(
                 if has_last_pass
                 else "Authored — no ship-cleared PASS in ledger yet"
             )
+        why = str(p.get("why") or "").strip()
+        cname = str(p.get("contract_name") or "").strip()
+        # Avoid pending-flavored suite "why" once the path is on the live surface
+        if state in ("live", "stale") and why and any(
+            bit in why.lower()
+            for bit in ("not yet", "pending", "authored, not", "not ship-cleared")
+        ):
+            display = cname or cid
+        elif state == "pending":
+            display = why or cname or cid
+        else:
+            display = why or cname or cid
         rows.append(
             {
                 "id": cid,
-                "name": p.get("why") or cid,
+                "name": display,
                 "state": state,
                 "note": note,
                 "kind": "suite",
@@ -394,9 +425,10 @@ def _build_coverage(
             {
                 "id": slug,
                 "name": g.get("name") or slug,
-                "state": "seen_ungated",
-                "note": str(g.get("note") or "Coverage gap from export"),
+                "state": "gap",
+                "note": str(g.get("note") or "Coverage gap — no export evidence yet"),
                 "kind": "ingest",
+                "starter": g.get("starter"),
             }
         )
 
@@ -406,6 +438,7 @@ def _build_coverage(
     counts = {
         "live": sum(1 for r in rows if r["state"] == "live"),
         "seen_ungated": sum(1 for r in rows if r["state"] == "seen_ungated"),
+        "gap": sum(1 for r in rows if r["state"] == "gap"),
         "pending": sum(1 for r in rows if r["state"] == "pending"),
         "stale": sum(1 for r in rows if r["state"] == "stale"),
     }
@@ -431,7 +464,8 @@ def _build_coverage(
         "claim": (
             "Easy ship visibility where telemetry is hard to read: "
             "Obs shows what ran; Center shows which of those behaviors you already gate, "
-            "which you still owe, and what the next ship would change."
+            "which you still owe, and what the next ship would change. "
+            "Live is the last cleared ship surface — not this decision's green/red."
         ),
     }
 
@@ -741,18 +775,29 @@ def build_center_model(
             meta_row = path_meta.get(cid) or path_meta.get(stem) or {}
             why = meta_row.get("why") or ""
             priority = meta_row.get("priority") or ""
-            if not why and suite is not None:
+            contract_name = ""
+            if suite is not None:
                 try:
                     for entry in suite.paths:
                         resolved = suite.resolve_path(entry)
                         if resolved.stem == stem or str(entry.id or "") == cid:
                             cmeta = _load_contract_meta(resolved)
-                            why = str(cmeta.get("name") or "")
+                            contract_name = str(cmeta.get("name") or "")
+                            if not why:
+                                why = contract_name
                             break
                 except Exception:
                     pass
             stats = _path_history_stats(history_rows, cid)
-            paths.append({**p, "why": why, "priority": priority, **stats})
+            paths.append(
+                {
+                    **p,
+                    "why": why,
+                    "contract_name": contract_name,
+                    "priority": priority,
+                    **stats,
+                }
+            )
     elif suite is not None:
         for entry in suite.paths:
             try:
@@ -761,7 +806,8 @@ def build_center_model(
                 cid = str(entry.id or cmeta.get("id") or resolved.stem)
                 stem = resolved.stem
                 meta_row = path_meta.get(cid) or path_meta.get(stem) or {}
-                why = meta_row.get("why") or str(cmeta.get("name") or "")
+                contract_name = str(cmeta.get("name") or "")
+                why = meta_row.get("why") or contract_name
                 priority = meta_row.get("priority") or ""
                 stats = _path_history_stats(history_rows, cid)
                 paths.append(
@@ -774,6 +820,7 @@ def build_center_model(
                         "headline": "",
                         "blockers": [],
                         "why": why,
+                        "contract_name": contract_name,
                         "priority": priority,
                         **stats,
                     }
@@ -795,7 +842,8 @@ def build_center_model(
                 if keys & present:
                     continue
                 meta_row = path_meta.get(cid) or path_meta.get(stem) or {}
-                why = meta_row.get("why") or str(cmeta.get("name") or "")
+                contract_name = str(cmeta.get("name") or "")
+                why = meta_row.get("why") or contract_name
                 priority = meta_row.get("priority") or ""
                 stats = _path_history_stats(history_rows, cid)
                 paths.append(
@@ -808,6 +856,7 @@ def build_center_model(
                         "headline": "",
                         "blockers": [],
                         "why": why,
+                        "contract_name": contract_name,
                         "priority": priority,
                         **stats,
                     }
@@ -893,7 +942,7 @@ def build_center_model(
     n_cadence = sum(1 for h in history_rows if h.get("trigger") == "cadence")
     blocked_now = [p["contract_id"] for p in paths if p.get("passed") is False]
 
-    cli_suite = str(suite_path) if suite_path else "suites/starter.suite.yaml"
+    cli_suite = _cli_suite_ref(Path(suite_path) if suite_path else None)
     commands = {
         "validate": f"vantage-core suite validate {cli_suite}",
         "rerun": (
@@ -1107,13 +1156,16 @@ def center_to_html(model: dict[str, Any]) -> str:
                     {
                         "slug": g.get("slug"),
                         "name": g.get("name"),
+                        "severity": g.get("severity"),
                         "reason": g.get("note"),
+                        "starter": g.get("starter"),
                     }
                 )
 
     cov = model.get("coverage") if isinstance(model.get("coverage"), dict) else None
     cov_counts = (cov or {}).get("counts") or {}
     n_seen = int(cov_counts.get("seen_ungated") or 0)
+    n_gap = int(cov_counts.get("gap") or 0)
     n_pending = int(cov_counts.get("pending") or 0)
 
     if not model.get("has_decision"):
@@ -1122,8 +1174,14 @@ def center_to_html(model: dict[str, Any]) -> str:
     elif route != "pass":
         next_label = "Fix failing path(s), then re-decide"
         next_cmd = cmds.get("rerun") or ""
-    elif n_seen or author_next:
+    elif n_seen:
         next_label = "Author the next path from your export (seen, ungated)"
+        next_cmd = cmds.get("ingest") or ""
+    elif n_gap:
+        next_label = "Author a coverage gap (no export evidence yet — use starter)"
+        next_cmd = cmds.get("ingest") or ""
+    elif author_next:
+        next_label = "Author the next path from your export"
         next_cmd = cmds.get("ingest") or ""
     elif n_pending:
         next_label = "Clear pending paths onto the ship surface (re-decide)"
@@ -1174,7 +1232,7 @@ def center_to_html(model: dict[str, Any]) -> str:
       <p class="fuel-gives">
         <strong>What this gives:</strong>
         <strong>1 · Author</strong> — Seen ungated → draft contracts you edit
-        · <strong>2 · Coverage</strong> — Live / Seen ungated / Pending / Stale
+        · <strong>2 · Coverage</strong> — Live / Seen ungated / Gap / Pending / Stale
       </p>
       <p class="muted">One-shot file fuel — not OAuth, not continuous monitoring.</p>
     </section>"""
@@ -1184,7 +1242,7 @@ def center_to_html(model: dict[str, Any]) -> str:
       <h2>Same export · two jobs</h2>
       <p class="lead">
         <strong>1 · Author</strong> — what you still owe (Seen ungated → draft contracts you edit).
-        <strong>2 · Coverage</strong> — Live / Seen ungated / Pending / Stale on the ship surface.
+        <strong>2 · Coverage</strong> — Live / Seen ungated / Gap / Pending / Stale on the ship surface.
       </p>
       <p class="muted">Not continuous monitoring — one-shot file fuel for the cockpit.</p>
     </section>"""
@@ -1194,6 +1252,7 @@ def center_to_html(model: dict[str, Any]) -> str:
         state_label = {
             "live": ("LIVE", "ok"),
             "seen_ungated": ("SEEN · UNGATED", "review"),
+            "gap": ("GAP", "muted"),
             "pending": ("PENDING RELEASE", "review"),
             "stale": ("STALE GATE", "muted"),
         }
@@ -1201,6 +1260,7 @@ def center_to_html(model: dict[str, Any]) -> str:
         for key, lab in (
             ("live", "Live"),
             ("seen_ungated", "Seen ungated"),
+            ("gap", "Gap"),
             ("pending", "Pending"),
             ("stale", "Stale"),
         ):
@@ -1213,6 +1273,17 @@ def center_to_html(model: dict[str, Any]) -> str:
             f"<p class='muted'>Last ship-cleared · {_esc(last_lab)}</p>"
             if last_lab
             else "<p class='muted'>No ship-cleared PASS in ledger yet — suite paths show as pending.</p>"
+        )
+        live_cue = (
+            "<p class='cov-cue'><strong>Live ≠ this decision.</strong> "
+            "Live is the last cleared ship surface. Path register shows this run’s PASS/FAIL.</p>"
+            if model.get("has_decision") and route != "pass" and last_lab
+            else (
+                "<p class='muted cov-cue'><strong>Live</strong> = last ship-cleared PASS "
+                "(prod gate), not this decision’s green/red.</p>"
+                if last_lab
+                else ""
+            )
         )
         claim = cov.get("claim") or ""
         crow = []
@@ -1234,20 +1305,26 @@ def center_to_html(model: dict[str, Any]) -> str:
                 f"<div class=\"muted\">{_esc(r.get('note') or '')}</div></td>"
                 "</tr>"
             )
-        cov_h2 = "2 · Coverage · Live vs Pending" if dual_jobs else "Coverage · Live vs Pending"
+        cov_h2 = (
+            "2 · Coverage · Live / Seen / Gap / Pending"
+            if dual_jobs
+            else "Coverage · Live / Seen / Gap / Pending"
+        )
         coverage_html = f"""
     <section class="coverage">
       <h2>{cov_h2}</h2>
       <p class="lead">{_esc(claim)}</p>
       <p class="cov-chips">{chip_line}</p>
+      {live_cue}
       {last_bit}
       <table>
         <thead><tr><th>State</th><th>Path</th></tr></thead>
         <tbody>{''.join(crow)}</tbody>
       </table>
       <p class="muted" style="margin-top:0.65rem">
-        Live = under last ship-cleared gate (not streaming prod).
-        Seen ungated = export fuel to author.
+        Live = last ship-cleared PASS (prod gate) — not this decision’s result.
+        Seen ungated = export evidence, not in suite — author next.
+        Gap = known quiet-miss family with no export evidence yet — still worth authoring.
         Pending = authored, not yet on that PASS surface.
         Stale = on last PASS, absent from recent export.
         Not continuous monitoring.
@@ -1467,6 +1544,8 @@ def center_to_html(model: dict[str, Any]) -> str:
       display: inline-block; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em;
       padding: 0.2rem 0.45rem; background: var(--brand-bg); color: var(--brand-deep); border: 1px solid var(--brand-border);
     }}
+    .cov-cue {{ margin: 0 0 0.5rem; font-size: 0.9rem; }}
+    .cov-cue strong {{ color: var(--ink); }}
     section.fleet {{ border-color: #a8a29e; }}
     h2 {{
       font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase;

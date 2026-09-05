@@ -17,7 +17,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from vantage_core import __version__ as _CORE_VERSION
 
@@ -28,7 +28,7 @@ PREFERRED_LINE = (
     "which you still owe, and what the next ship would change."
 )
 VISIBILITY_GOAL = (
-    "Goal: easy ship visibility — Live / Seen ungated / Pending — "
+    "Goal: easy ship visibility — Live / Seen ungated / Gap / Pending — "
     "where today telemetry is hard to read, scattered, and obscure."
 )
 
@@ -47,6 +47,76 @@ def _demo_suite_path() -> Path:
     if samples.is_file():
         return samples
     return ROOT / "examples" / "samples" / "demo.suite.yaml"
+
+
+def _packaged_sample(name: str) -> Path:
+    packaged = PKG / "samples" / name
+    if packaged.is_file():
+        return packaged
+    return ROOT / "examples" / "samples" / name
+
+
+def _packaged_starter(name: str) -> Path:
+    packaged = PKG / "starters" / name
+    if packaged.is_file():
+        return packaged
+    return ROOT / "examples" / "contracts" / "starters" / name
+
+
+def _sample_doc_catalog() -> list[dict[str, str]]:
+    """Docs partners can open in the main panel (selection in sidebar only)."""
+    return [
+        {"id": "demo.suite.yaml", "label": "demo.suite.yaml", "kind": "yaml"},
+        {"id": "01_refuse_pii.yaml", "label": "01_refuse_pii.yaml", "kind": "yaml"},
+        {"id": "02_cite_sources.yaml", "label": "02_cite_sources.yaml", "kind": "yaml"},
+        {
+            "id": "03_escalate_not_guess.yaml",
+            "label": "03_escalate_not_guess.yaml",
+            "kind": "yaml",
+        },
+        {"id": "04_sql_safety.yaml", "label": "04_sql_safety.yaml", "kind": "yaml"},
+        {"id": "05_routing.yaml", "label": "05_routing.yaml", "kind": "yaml"},
+        {
+            "id": "langsmith_export_sample.json",
+            "label": "langsmith_export_sample.json",
+            "kind": "json",
+        },
+        {
+            "id": "braintrust_export_sample.json",
+            "label": "braintrust_export_sample.json",
+            "kind": "json",
+        },
+    ]
+
+
+def _resolve_sample_doc(name: str, work: Path | None = None) -> Path | None:
+    """Resolve a packaged sample/starter, or a draft written in the workdir."""
+    name = (name or "").strip()
+    if not name or ".." in name or "/" in name or "\\" in name:
+        return None
+    if work is not None and name.startswith("draft:"):
+        draft_name = name.removeprefix("draft:")
+        if not draft_name or ".." in draft_name:
+            return None
+        draft = work / "contracts_drafts" / draft_name
+        return draft if draft.is_file() else None
+    if name.endswith(".json"):
+        if name == "langsmith_export_sample.json":
+            p = _sample_export_path()
+            return p if p.is_file() else None
+        if name == "braintrust_export_sample.json":
+            p = _braintrust_export_path()
+            return p if p.is_file() else None
+        return None
+    if name == "demo.suite.yaml":
+        p = _demo_suite_path()
+        return p if p.is_file() else None
+    # Prefer samples/, then starters/
+    for getter in (_packaged_sample, _packaged_starter):
+        p = getter(name)
+        if p.is_file():
+            return p
+    return None
 
 
 BEFORE = None  # resolved at beat time
@@ -288,7 +358,7 @@ def _fuel_preview(report: dict[str, Any], *, source_name: str) -> dict[str, Any]
         "source": source_name,
         "sample_quote": quote or None,
         "how": "vantage-core ingest your-export.json --write-drafts ./contracts_drafts",
-        "gives": "Author next (drafts) + Coverage (Live / Seen ungated / Pending)",
+        "gives": "Author next (drafts) + Coverage (Live / Seen ungated / Gap / Pending)",
         "peek": {
             "langsmith": "/samples/langsmith_export_sample.json",
             "braintrust": "/samples/braintrust_export_sample.json",
@@ -362,29 +432,50 @@ def beat_ingest_coverage(work: Path) -> dict[str, Any]:
     if not ungated and report.get("suggestions"):
         ungated = [str(report["suggestions"][0].get("name") or "path")]
     ungated_bit = ungated[0] if ungated else "a path from the export"
+    gaps = [g for g in (report.get("coverage_gaps") or []) if isinstance(g, dict)]
+    gap_bit = (
+        str(gaps[0].get("name") or gaps[0].get("slug") or "routing")
+        if gaps
+        else None
+    )
     n_drafts = len(drafts)
-    fuel = _fuel_preview(report, source_name=_sample_export_path().name)
-    shape_lab = fuel.get("label") or "export"
+    shape_lab = "LangSmith-shaped"
+    try:
+        shape = report.get("shape") if isinstance(report.get("shape"), dict) else {}
+        shape_lab = str(shape.get("label") or shape_lab)
+    except Exception:
+        pass
 
     return {
         "title": "Ingest → Author + Coverage (both jobs)",
         "say": (
-            f"{VISIBILITY_GOAL} "
-            f"This dump is {shape_lab} — same shape as yours from LangSmith or Braintrust. "
-            f"Peek the sample JSON in the sidebar (or /samples/). "
-            f"{PREFERRED_LINE} "
-            "Same export, two jobs on this screen: "
-            f"(1) AUTHOR — Center lists Seen ungated (e.g. {ungated_bit}) and we wrote "
-            f"{n_drafts} draft contract(s) under contracts_drafts/ — you still edit and own the bar. "
-            "(2) VISIBILITY — Coverage chips: Live = already gated on last ship; "
-            "Seen ungated = still owe; Pending = authored, not yet ship-cleared. "
-            "Not monitoring — one-shot file."
+            f"Same {shape_lab} export → two jobs. "
+            f"Author: Seen ungated ({ungated_bit}) + {n_drafts} draft(s). "
+            "Coverage: Live / Seen ungated"
+            + (f" / Gap ({gap_bit})" if gap_bit else " / Gap")
+            + " / Pending. "
+            "Open a sample YAML from the sidebar to read it in the main panel. "
+            f"{PREFERRED_LINE}"
         ),
         "center": str(center),
         "route": "coverage",
         "drafts": n_drafts,
-        "fuel": fuel,
+        "docs": _beat3_docs(work, drafts),
     }
+
+
+def _beat3_docs(work: Path, drafts: list[Path]) -> list[dict[str, str]]:
+    """Extra docs after beat 3 — drafted contracts in the workdir."""
+    out: list[dict[str, str]] = []
+    for p in drafts[:4]:
+        out.append(
+            {
+                "id": f"draft:{p.name}",
+                "label": f"draft · {p.name}",
+                "kind": "yaml",
+            }
+        )
+    return out
 
 
 def _starters_dir() -> Path:
@@ -395,11 +486,14 @@ def _starters_dir() -> Path:
 
 
 def _pending_suite_path(work: Path) -> Path:
-    """Suite = demo paths + SQL safety (authored, not on last PASS)."""
+    """Suite = demo paths + SQL safety sample (authored, not on last PASS)."""
     from vantage_core.suite import load_suite
 
     _, _, suite_p = _paths()
-    extra = _starters_dir() / "04_sql_safety.yaml"
+    # Use packaged sample so id matches Sample documents (sample.acme_sql_safety_v1)
+    extra = _packaged_sample("04_sql_safety.yaml")
+    if not extra.is_file():
+        extra = _starters_dir() / "04_sql_safety.yaml"
     suite_dir = work / "suites"
     suite_dir.mkdir(parents=True, exist_ok=True)
     pending_suite = suite_dir / "pending_demo.suite.yaml"
@@ -415,7 +509,7 @@ def _pending_suite_path(work: Path) -> Path:
         resolved = demo_suite.resolve_path(entry)
         lines.append(f"  - path: {resolved}")
     lines.append(f"  - path: {extra.resolve()}")
-    lines.append('    why: "SQL safety — authored, not yet ship-cleared"')
+    lines.append('    why: "Acme — SQL safety (optional path)"')
     lines.append("    priority: p1")
     pending_suite.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return pending_suite
@@ -488,8 +582,10 @@ def beat_pending_cleared_live(work: Path) -> dict[str, Any]:
     if last_pass is None:
         last_pass = _load(before_p)
 
-    contracts = _starters_dir()
-    extra = contracts / "04_sql_safety.yaml"
+    contracts = _packaged_sample("04_sql_safety.yaml")
+    if not contracts.is_file():
+        contracts = _starters_dir() / "04_sql_safety.yaml"
+    extra = contracts
     extra_id = "sample.acme_sql_safety_v1"
     try:
         from vantage_core.contract import load_contract
@@ -707,22 +803,66 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
       font-size: 0.72rem; font-weight: 600; opacity: 0.92;
     }}
     header {{
-      padding: 0.85rem 1.25rem; border-bottom: 1px solid var(--line); background: var(--card);
-      display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: baseline; justify-content: space-between;
+      padding: 0; border-bottom: 1px solid var(--line); background: var(--card);
+    }}
+    header .header-row {{
+      padding: 0.75rem 1.25rem; display: flex; flex-wrap: wrap; gap: 0.65rem;
+      align-items: baseline; justify-content: space-between;
     }}
     header h1 {{ margin: 0; font-size: 1.05rem; font-weight: 700; letter-spacing: -0.01em; }}
     header .kicker {{
       margin: 0.15rem 0 0; font-size: 0.85rem; color: var(--muted); font-weight: 500;
     }}
-    header .sub {{ color: var(--muted); font-size: 0.85rem; max-width: 42rem; margin-top: 0.35rem; }}
+    header .header-actions {{
+      display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;
+    }}
     header .ver {{
       font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em;
       padding: 0.2rem 0.45rem; background: var(--accent-bg); color: var(--accent);
       white-space: nowrap;
     }}
+    .thesis-toggle {{
+      display: none; border: 1px solid var(--line); background: #fff;
+      color: var(--muted); font: inherit; font-size: 0.75rem; font-weight: 650;
+      padding: 0.25rem 0.55rem; cursor: pointer;
+    }}
+    .thesis-toggle:hover {{ border-color: var(--accent); color: var(--accent); }}
+    .thesis {{
+      display: flex; gap: 0.75rem; align-items: flex-start;
+      margin: 0; padding: 0.45rem 1.25rem 0.55rem;
+      border-top: 1px solid var(--line); background: #f8fafc;
+      color: var(--muted); font-size: 0.78rem; line-height: 1.4;
+    }}
+    .thesis .thesis-body {{ flex: 1; min-width: 0; margin: 0; }}
+    .thesis .thesis-body strong {{ color: var(--ink); font-weight: 650; }}
+    .thesis-close {{
+      display: none; flex-shrink: 0; border: 0; background: transparent;
+      color: var(--muted); font-size: 1.1rem; line-height: 1; cursor: pointer;
+      padding: 0.1rem 0.25rem;
+    }}
+    .thesis-close:hover {{ color: var(--ink); }}
     .layout {{ flex: 1; display: grid; grid-template-columns: minmax(16rem, 22rem) 1fr; min-height: 0; }}
     @media (max-width: 860px) {{
       .layout {{ grid-template-columns: 1fr; grid-template-rows: auto 1fr; }}
+      .thesis-toggle {{ display: inline-block; }}
+      .thesis {{
+        display: none; position: relative; flex-direction: row;
+        margin: 0 0.75rem 0.75rem; padding: 0.7rem 0.75rem;
+        border: 1px solid var(--line); border-radius: 0; background: var(--accent-bg);
+      }}
+      .thesis.is-open {{ display: flex; }}
+      .thesis-close {{ display: inline-block; }}
+    }}
+    @media (min-width: 861px) {{
+      .thesis {{
+        display: flex;
+      }}
+      .thesis .thesis-body {{
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }}
+    }}
+    @media (min-width: 1100px) {{
+      .thesis .thesis-body {{ white-space: normal; }}
     }}
     aside {{
       border-right: 1px solid var(--line); background: var(--card);
@@ -781,18 +921,45 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
     }}
     .fuel .how {{ margin: 0.45rem 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; word-break: break-all; }}
     .fuel a {{ color: var(--accent); font-weight: 600; }}
-    .peek {{
+    .docs {{
       margin: 0.85rem 0 0; padding-top: 0.75rem; border-top: 1px solid var(--line);
-      font-size: 0.8rem; color: var(--muted);
     }}
-    .peek a {{ color: var(--accent); }}
+    .docs strong {{
+      display: block; color: var(--ink); margin-bottom: 0.35rem; font-size: 0.7rem;
+      letter-spacing: 0.06em; text-transform: uppercase;
+    }}
+    .docs select {{
+      width: 100%; font: inherit; font-size: 0.8rem; font-weight: 600;
+      padding: 0.4rem 0.5rem; border: 1px solid var(--line); background: #fff;
+      color: var(--ink); cursor: pointer;
+    }}
+    .docs select:focus {{ outline: 2px solid var(--accent-bg); border-color: var(--accent); }}
     .status {{ color: var(--muted); font-size: 0.8rem; margin-top: 0.75rem; }}
-    main {{ min-height: 0; display: flex; flex-direction: column; }}
+    main {{ min-height: 0; display: flex; flex-direction: column; position: relative; }}
     main .bar {{
       padding: 0.45rem 0.85rem; border-bottom: 1px solid var(--line);
       color: var(--muted); font-size: 0.78rem; background: #f5f5f4;
+      display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
     }}
+    main .bar .bar-label {{ min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+    main .bar .bar-close {{
+      display: none; flex-shrink: 0; border: 1px solid var(--line); background: #fff;
+      color: var(--ink); font: inherit; font-size: 0.75rem; font-weight: 650;
+      padding: 0.2rem 0.55rem; cursor: pointer;
+    }}
+    main .bar .bar-close:hover {{ border-color: var(--accent); color: var(--accent); }}
+    main.doc-open .bar .bar-close {{ display: inline-block; }}
     iframe {{ flex: 1; width: 100%; border: 0; background: #fff; }}
+    .doc-panel {{
+      display: none; flex: 1; min-height: 0; flex-direction: column; background: #0f172a; color: #e2e8f0;
+    }}
+    main.doc-open iframe {{ display: none; }}
+    main.doc-open .doc-panel {{ display: flex; }}
+    .doc-panel pre {{
+      margin: 0; padding: 1rem 1.25rem; overflow: auto; flex: 1;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.82rem; line-height: 1.45; white-space: pre; tab-size: 2;
+    }}
     .err {{ color: #991b1b; }}
   </style>
 </head>
@@ -802,12 +969,20 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
     <code>vantage-core demo --interactive</code>
   </div>
   <header>
-    <div>
-      <h1>RuntimeAI Control Center · Demo</h1>
-      <div class="kicker">Still Trust / Ship · walkthrough of the real cockpit</div>
-      <div class="sub">{VISIBILITY_GOAL} {PREFERRED_LINE}</div>
+    <div class="header-row">
+      <div>
+        <h1>RuntimeAI Control Center · Demo</h1>
+        <div class="kicker">Still Trust / Ship · walkthrough of the real cockpit</div>
+      </div>
+      <div class="header-actions">
+        <button type="button" class="thesis-toggle" id="thesis-toggle" aria-expanded="false" aria-controls="thesis-panel">Goal</button>
+        <div class="ver">DEMO · {_CORE_VERSION}</div>
+      </div>
     </div>
-    <div class="ver">DEMO · {_CORE_VERSION}</div>
+    <div class="thesis" id="thesis-panel" role="note">
+      <p class="thesis-body">{VISIBILITY_GOAL} {PREFERRED_LINE}</p>
+      <button type="button" class="thesis-close" id="thesis-close" aria-label="Close goal">×</button>
+    </div>
   </header>
   <div class="layout">
     <aside>
@@ -822,7 +997,7 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
       </button>
       <button class="beat" data-beat="3" type="button">
         <strong>3 · Author + Coverage</strong>
-        <span>Same export · drafts + Live / Seen / Pending</span>
+        <span>Export → drafts + Live / Seen / Gap / Pending</span>
       </button>
       <button class="beat" data-beat="4" type="button">
         <strong>4 · Pending release</strong>
@@ -861,45 +1036,60 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
         <h3>What you already have</h3>
         <div id="fuel-body"></div>
       </div>
-      <div class="peek">
-        <strong>Peek sample exports</strong> (recognize your tool):
-        <a href="/samples/langsmith_export_sample.json" target="_blank" rel="noopener">LangSmith</a>
-        ·
-        <a href="/samples/braintrust_export_sample.json" target="_blank" rel="noopener">Braintrust</a>
-        <br />Then: <code style="font-size:0.72rem">vantage-core ingest your-export.json --write-drafts ./contracts_drafts</code>
+      <div class="docs" id="docs">
+        <strong>Sample documents</strong>
+        <select id="doc-select" aria-label="Open a sample document in the main panel">
+          <option value="">Open in main panel…</option>
+        </select>
       </div>
       <p class="status" id="status"></p>
     </aside>
-    <main>
-      <div class="bar">Demo · Control Center · <code>decisions/center.html</code> · vantage-core {_CORE_VERSION}</div>
+    <main id="main">
+      <div class="bar">
+        <span class="bar-label" id="bar-label">Demo · Control Center · <code>decisions/center.html</code> · vantage-core {_CORE_VERSION}</span>
+        <button type="button" class="bar-close" id="doc-close">Back to Center</button>
+      </div>
       <iframe id="frame" title="RuntimeAI Control Center — Demo" src="/center.html"></iframe>
+      <div class="doc-panel" id="doc-panel" aria-live="polite">
+        <pre id="doc-body"></pre>
+      </div>
     </main>
   </div>
   <script>
     const say = document.getElementById("say");
     const status = document.getElementById("status");
     const frame = document.getElementById("frame");
+    const mainEl = document.getElementById("main");
+    const barLabel = document.getElementById("bar-label");
     const fuel = document.getElementById("fuel");
     const fuelBody = document.getElementById("fuel-body");
     const formatsEl = document.getElementById("formats");
+    const docSelect = document.getElementById("doc-select");
+    const docBody = document.getElementById("doc-body");
+    const BASE_DOCS = {json.dumps(_sample_doc_catalog())};
+    let extraDocs = [];
     let formatMap = null;
+    let activeDocId = null;
+    let lastCenterHref = "/center.html";
+    function setBar(html) {{
+      barLabel.innerHTML = html;
+    }}
     function setFormat(fmt) {{
       if (!formatMap) return;
       const href = formatMap[fmt];
       if (!href) return;
+      closeDoc({{ keepSelect: true }});
       document.querySelectorAll(".fmt").forEach(b => b.classList.toggle("active", b.dataset.fmt === fmt));
       frame.src = href + "?t=" + Date.now();
-      const bar = document.querySelector("main .bar");
+      lastCenterHref = href;
       const names = {{
         html: "suite.html (ship memo)",
         pdf: "suite.pdf (summary)",
         detailed: "simulation_scorecard.pdf (detailed)",
         json: "suite.json",
       }};
-      if (bar) {{
-        bar.innerHTML = "Demo · Report · <code>" + (names[fmt] || fmt) +
-          "</code> · vantage-core {_CORE_VERSION}";
-      }}
+      setBar("Demo · Report · <code>" + (names[fmt] || fmt) +
+        "</code> · vantage-core {_CORE_VERSION}");
     }}
     function renderFormats(fmts) {{
       formatMap = fmts || null;
@@ -915,6 +1105,55 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
       }});
       setFormat("html");
     }}
+    function closeDoc(opts) {{
+      activeDocId = null;
+      mainEl.classList.remove("doc-open");
+      docBody.textContent = "";
+      if (!opts || !opts.keepSelect) docSelect.value = "";
+      setBar("Demo · Control Center · <code>decisions/center.html</code> · vantage-core {_CORE_VERSION}");
+    }}
+    async function openDoc(id, label) {{
+      if (!id) {{
+        closeDoc();
+        if (lastCenterHref) frame.src = lastCenterHref + (lastCenterHref.includes("?") ? "&" : "?") + "t=" + Date.now();
+        return;
+      }}
+      status.textContent = "Loading " + (label || id) + "…";
+      status.classList.remove("err");
+      try {{
+        const res = await fetch("/samples/" + encodeURIComponent(id));
+        const text = await res.text();
+        if (!res.ok) throw new Error(text || res.statusText);
+        docBody.textContent = text;
+        mainEl.classList.add("doc-open");
+        activeDocId = id;
+        docSelect.value = id;
+        setBar("Demo · Sample · <code>" + (label || id).replace(/</g, "&lt;") +
+          "</code> · vantage-core {_CORE_VERSION}");
+        status.textContent = "Showing " + (label || id);
+      }} catch (e) {{
+        status.textContent = String(e);
+        status.classList.add("err");
+        docSelect.value = "";
+      }}
+    }}
+    function renderDocs(extra) {{
+      extraDocs = Array.isArray(extra) ? extra : [];
+      const all = BASE_DOCS.concat(extraDocs);
+      const seen = new Set();
+      const keep = docSelect.value;
+      docSelect.innerHTML = '<option value="">Open in main panel…</option>';
+      all.forEach(d => {{
+        if (!d || !d.id || seen.has(d.id)) return;
+        seen.add(d.id);
+        const opt = document.createElement("option");
+        opt.value = d.id;
+        opt.textContent = d.label || d.id;
+        docSelect.appendChild(opt);
+      }});
+      if (keep && seen.has(keep)) docSelect.value = keep;
+      else if (activeDocId && !seen.has(activeDocId)) closeDoc();
+    }}
     function renderFuel(f) {{
       if (!f) {{ fuel.classList.remove("show"); return; }}
       const quote = f.sample_quote
@@ -926,10 +1165,7 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
         "</p>" + quote +
         "<p>" + (f.hint || "") + "</p>" +
         "<p><strong>How:</strong></p><p class=\\"how\\">" + (f.how || "") + "</p>" +
-        "<p style=\\"margin-top:0.45rem\\"><strong>Gives:</strong> " + (f.gives || "") + "</p>" +
-        (f.peek ? '<p style="margin-top:0.45rem"><a href="' + f.peek.langsmith +
-          '" target="_blank" rel="noopener">Open LangSmith sample</a> · <a href="' +
-          f.peek.braintrust + '" target="_blank" rel="noopener">Open Braintrust sample</a></p>' : "");
+        "<p style=\\"margin-top:0.45rem\\"><strong>Gives:</strong> " + (f.gives || "") + "</p>";
       fuel.classList.add("show");
     }}
     async function runBeat(id) {{
@@ -943,17 +1179,17 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
         say.textContent = data.say || data.title;
         status.textContent = data.title + (data.fleet ? " · " + data.fleet : "");
         renderFuel(data.fuel || null);
+        renderDocs(data.docs || []);
         if (data.formats) {{
           renderFormats(data.formats);
         }} else {{
           renderFormats(null);
           const view = data.view || "center";
           const map = {{ report: "/suite.html", center: "/center.html" }};
-          frame.src = (map[view] || "/center.html") + "?t=" + Date.now();
-          const bar = document.querySelector("main .bar");
-          if (bar) {{
-            bar.innerHTML = "Demo · Control Center · <code>decisions/center.html</code> · vantage-core {_CORE_VERSION}";
-          }}
+          lastCenterHref = map[view] || "/center.html";
+          closeDoc();
+          frame.src = lastCenterHref + "?t=" + Date.now();
+          setBar("Demo · Control Center · <code>decisions/center.html</code> · vantage-core {_CORE_VERSION}");
         }}
       }} catch (e) {{
         status.textContent = String(e);
@@ -966,6 +1202,35 @@ CONSOLE_HTML = f"""<!DOCTYPE html>
     document.querySelectorAll(".fmt").forEach(btn => {{
       btn.addEventListener("click", () => setFormat(btn.dataset.fmt));
     }});
+    docSelect.addEventListener("change", () => {{
+      const id = docSelect.value;
+      const opt = docSelect.selectedOptions[0];
+      openDoc(id, opt ? opt.textContent : id);
+    }});
+    document.getElementById("doc-close").addEventListener("click", () => {{
+      closeDoc();
+      frame.src = (lastCenterHref || "/center.html") + "?t=" + Date.now();
+    }});
+    renderDocs([]);
+    (function thesisPanel() {{
+      const panel = document.getElementById("thesis-panel");
+      const toggle = document.getElementById("thesis-toggle");
+      const closeBtn = document.getElementById("thesis-close");
+      if (!panel || !toggle) return;
+      function open() {{
+        panel.classList.add("is-open");
+        toggle.setAttribute("aria-expanded", "true");
+      }}
+      function close() {{
+        panel.classList.remove("is-open");
+        toggle.setAttribute("aria-expanded", "false");
+      }}
+      toggle.addEventListener("click", () => {{
+        if (panel.classList.contains("is-open")) close();
+        else open();
+      }});
+      if (closeBtn) closeBtn.addEventListener("click", close);
+    }})();
     // Auto-start beat 1 so the surface isn't empty
     runBeat("1");
   </script>
@@ -1043,25 +1308,24 @@ class _Handler(BaseHTTPRequestHandler):
             self._bytes(200, detailed.read_bytes(), "application/pdf")
             return
         if path.startswith("/samples/"):
-            name = path.rsplit("/", 1)[-1]
-            allowed = {
-                "langsmith_export_sample.json": _sample_export_path,
-                "braintrust_export_sample.json": _braintrust_export_path,
-                "simulation_scorecard_sample.pdf": _simulation_scorecard_sample_path,
-            }
-            getter = allowed.get(name)
-            if getter is None:
+            name = unquote(path.rsplit("/", 1)[-1])
+            if name == "simulation_scorecard_sample.pdf":
+                sample = _simulation_scorecard_sample_path()
+                if not sample.is_file():
+                    self._json(404, {"error": f"missing sample {name}"})
+                    return
+                self._bytes(200, sample.read_bytes(), "application/pdf")
+                return
+            sample = _resolve_sample_doc(name, self.work)
+            if sample is None or not sample.is_file():
                 self._json(404, {"error": f"unknown sample {name}"})
                 return
-            sample = getter()
-            if not sample.is_file():
-                self._json(404, {"error": f"missing sample {name}"})
-                return
-            ctype = (
-                "application/pdf"
-                if name.endswith(".pdf")
-                else "application/json; charset=utf-8"
-            )
+            if name.endswith(".pdf"):
+                ctype = "application/pdf"
+            elif name.endswith(".json"):
+                ctype = "application/json; charset=utf-8"
+            else:
+                ctype = "text/plain; charset=utf-8"
             self._bytes(200, sample.read_bytes(), ctype)
             return
         if path in ("/suite.json", "/decision.json"):
