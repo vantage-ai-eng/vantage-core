@@ -1,0 +1,250 @@
+name: "RuntimeAI Ship Gate"
+description: "Re-run your fixed scenarios on every change and return pass, review or block — with the cost, bound to the PR and SHA."
+author: "Vantage"
+
+branding:
+  icon: check-circle
+  color: blue
+
+inputs:
+  suite:
+    description: "Path to the suite to run. Ignored when `contract` is set."
+    required: false
+    default: "suites/starter.suite.yaml"
+  contract:
+    description: "Run a single contract instead of a suite."
+    required: false
+    default: ""
+  openrouter-api-key:
+    description: "OpenRouter key (BYOK). Live runs fail loudly without it. Pass secrets.OPENROUTER_API_KEY."
+    required: false
+    default: ""
+  fail-on:
+    description: "When to fail the check: block | review | never. Default block — a review verdict passes the build and is reported."
+    required: false
+    default: "block"
+  baseline:
+    description: "auto (restore the last successful decision on the default branch) | none | a path to a decision JSON."
+    required: false
+    default: "auto"
+  trigger:
+    description: "auto | change | cadence. auto maps pull_request/push to change and schedule to cadence."
+    required: false
+    default: "auto"
+  reps:
+    description: "Repeat each path N times (BYOK xN). Empty means the suite's own setting."
+    required: false
+    default: ""
+  pass-k:
+    description: "With `reps`, how many repetitions must pass."
+    required: false
+    default: ""
+  fail-under:
+    description: "Override the suite's score bar."
+    required: false
+    default: ""
+  version:
+    description: "pip specifier for the CLI, e.g. '>=0.1.19' or '==0.1.19' to pin."
+    required: false
+    default: ">=0.1.19"
+  python-version:
+    description: "Python used to run the gate."
+    required: false
+    default: "3.12"
+  save:
+    description: "Directory for the dated decision ledger."
+    required: false
+    default: "decisions/"
+  report:
+    description: "Also build the scorecard memo (HTML + PDF) and the local Center."
+    required: false
+    default: "true"
+  upload-artifact:
+    description: "Upload the decision artifact. Required for `baseline: auto` to find a baseline next run."
+    required: false
+    default: "true"
+  comment-on-pr:
+    description: "Post the verdict as a PR comment. Needs permissions: pull-requests: write."
+    required: false
+    default: "true"
+  working-directory:
+    description: "Directory to run in, if your suite does not live at the repo root."
+    required: false
+    default: "."
+
+outputs:
+  decision:
+    description: "pass | review | block"
+    value: ${{ steps.gate.outputs.decision }}
+  exit-code:
+    description: "0 pass, 2 review, 1 block"
+    value: ${{ steps.gate.outputs.exit_code }}
+  decision-file:
+    description: "Path to the decision JSON."
+    value: ${{ steps.gate.outputs.decision_file }}
+  headline:
+    description: "decision.bind.headline, e.g. 'PR #142 / SHA abc1234 decided at ...'"
+    value: ${{ steps.gate.outputs.headline }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install vantage-core
+      shell: bash
+      run: python -m pip install -U "vantage-core${{ inputs.version }}"
+
+    - name: Validate suite
+      if: inputs.contract == ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: vantage-core suite validate "${{ inputs.suite }}"
+
+    - name: Restore last ship decision
+      if: inputs.baseline == 'auto' && github.event_name != 'push'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -uo pipefail
+        mkdir -p baseline
+        RID=$(gh run list --repo "$GITHUB_REPOSITORY" \
+          --branch "${{ github.event.repository.default_branch }}" \
+          --workflow "${{ github.workflow }}" \
+          --status success --limit 1 \
+          --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)
+        if [ -n "${RID:-}" ] && [ "$RID" != "null" ]; then
+          gh run download "$RID" --name runtimeai-decision --dir baseline || true
+        fi
+        if [ -f baseline/decisions/suite.json ] && [ ! -f baseline/suite.json ]; then
+          mv baseline/decisions/suite.json baseline/suite.json
+        fi
+        if [ -f baseline/suite.json ]; then
+          echo "baseline restored"
+        else
+          echo "no baseline found - this run records the first ship decision"
+        fi
+
+    - name: Decide
+      id: gate
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        OPENROUTER_API_KEY: ${{ inputs.openrouter-api-key }}
+      run: |
+        set -uo pipefail
+        SAVE="${{ inputs.save }}"
+        mkdir -p "$SAVE"
+        OUT="${SAVE%/}/suite.json"
+
+        TRIGGER="${{ inputs.trigger }}"
+        if [ "$TRIGGER" = "auto" ]; then
+          if [ "${{ github.event_name }}" = "schedule" ]; then TRIGGER="cadence"; else TRIGGER="change"; fi
+        fi
+
+        BASE=""
+        case "${{ inputs.baseline }}" in
+          auto) [ -f baseline/suite.json ] && BASE="baseline/suite.json" ;;
+          none) BASE="" ;;
+          *)    BASE="${{ inputs.baseline }}" ;;
+        esac
+
+        ARGS=(--trigger "$TRIGGER" --json --save "$SAVE" --ci-comment)
+        [ -n "${{ inputs.reps }}" ]       && ARGS+=(--reps "${{ inputs.reps }}")
+        [ -n "${{ inputs.pass-k }}" ]     && ARGS+=(--pass-k "${{ inputs.pass-k }}")
+        [ -n "${{ inputs.fail-under }}" ] && ARGS+=(--fail-under "${{ inputs.fail-under }}")
+
+        set +e
+        if [ -n "${{ inputs.contract }}" ]; then
+          vantage-core run --contract "${{ inputs.contract }}" "${ARGS[@]}" | tee "$OUT"
+          CODE=${PIPESTATUS[0]}
+        elif [ -n "$BASE" ]; then
+          vantage-core suite rerun "${{ inputs.suite }}" --baseline "$BASE" "${ARGS[@]}" | tee "$OUT"
+          CODE=${PIPESTATUS[0]}
+        else
+          vantage-core suite run "${{ inputs.suite }}" "${ARGS[@]}" | tee "$OUT"
+          CODE=${PIPESTATUS[0]}
+        fi
+        set -e
+
+        case "$CODE" in
+          0) DECISION=pass ;;
+          2) DECISION=review ;;
+          1) DECISION=block ;;
+          *) DECISION=error ;;
+        esac
+
+        HEADLINE=$(OUT="$OUT" python -c 'import json,os; d=json.load(open(os.environ["OUT"])); b=d.get("bind") or {}; print(b.get("headline") or d.get("headline") or "")' 2>/dev/null || true)
+
+        {
+          echo "decision=$DECISION"
+          echo "exit_code=$CODE"
+          echo "decision_file=$OUT"
+          echo "headline=$HEADLINE"
+        } >> "$GITHUB_OUTPUT"
+
+        {
+          echo "### RuntimeAI ship gate — \`$DECISION\`"
+          echo
+          [ -n "$HEADLINE" ] && echo "$HEADLINE" && echo
+          echo "Exit $CODE · 0 pass · 2 review · 1 block"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        echo "RUNTIMEAI_DECISION=$DECISION" >> "$GITHUB_ENV"
+        echo "RUNTIMEAI_EXIT=$CODE" >> "$GITHUB_ENV"
+
+    - name: Scorecard memo and Center
+      if: always() && inputs.report == 'true'
+      continue-on-error: true
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        OUT="${{ steps.gate.outputs.decision_file }}"
+        SAVE="${{ inputs.save }}"
+        if [ -f "$OUT" ]; then
+          vantage-core report "$OUT" --html "${SAVE%/}/suite.html" --pdf "${SAVE%/}/suite.pdf" || true
+          vantage-core center --decisions "$SAVE" --decision "$OUT" --html "${SAVE%/}/center.html" || true
+        fi
+
+    - name: Upload decision artifact
+      if: always() && inputs.upload-artifact == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: runtimeai-decision
+        path: |
+          ${{ inputs.working-directory }}/${{ inputs.save }}
+        if-no-files-found: ignore
+
+    - name: Comment the verdict on the PR
+      if: always() && inputs.comment-on-pr == 'true' && github.event_name == 'pull_request'
+      continue-on-error: true
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        BODY_FILE=$(mktemp)
+        {
+          echo "**RuntimeAI ship gate — \`${RUNTIMEAI_DECISION:-error}\`**"
+          echo
+          [ -n "${{ steps.gate.outputs.headline }}" ] && echo "${{ steps.gate.outputs.headline }}" && echo
+          echo "Exit ${RUNTIMEAI_EXIT:-?} · 0 pass · 2 review · 1 block. Full decision artifact attached to this run."
+        } > "$BODY_FILE"
+        gh pr comment "${{ github.event.pull_request.number }}" --body-file "$BODY_FILE" || true
+
+    - name: Enforce the verdict
+      if: always()
+      shell: bash
+      run: |
+        CODE="${RUNTIMEAI_EXIT:-1}"
+        case "${{ inputs.fail-on }}" in
+          never)  echo "fail-on=never - reporting only (exit $CODE)"; exit 0 ;;
+          review) [ "$CODE" = "0" ] || { echo "fail-on=review - verdict exit $CODE"; exit 1; } ;;
+          *)      [ "$CODE" = "1" ] && { echo "fail-on=block - verdict is block"; exit 1; } ;;
+        esac
+        echo "gate passed (exit $CODE)"

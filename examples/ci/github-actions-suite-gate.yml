@@ -5,9 +5,10 @@
 # Comment: bind headline + compare_to_baseline (pull-requests: write)
 # Memo: suite.html (+ suite.pdf) + Control Center (center.html) as artifacts — not a Cloud dashboard.
 #
-# Requires vantage-core 0.1.18  ·  secret: OPENROUTER_API_KEY
+# Requires vantage-core 0.1.19  ·  secret: OPENROUTER_API_KEY
 # First PR after a green default-branch run is when --baseline appears.
 # Cadence does not observe silent same-id drift; it re-decides.
+# Point this workflow at the *accepted* suite (draft accept → contracts/ + suite).
 name: vantage-core suite gate
 
 on:

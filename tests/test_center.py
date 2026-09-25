@@ -458,7 +458,7 @@ def test_demo_offline_prints_coverage(capsys):
     out = capsys.readouterr().out
     assert "SAVED-EXAMPLE DEMO" in out
     assert "Mirrors vantage-core" in out
-    assert "0.1.18" in out
+    assert "0.1.19" in out
     assert "COVERAGE" in out
     assert "Obs shows what ran" in out
     assert "Seen ungated" in out or "Live (gated" in out
@@ -699,7 +699,7 @@ def test_interactive_http_beat_api(tmp_path):
         assert "braintrust_export_sample" in page
         assert "Demo" in page
         assert "DEMO ·" in page
-        assert "0.1.18" in page
+        assert "0.1.19" in page
         assert "Interactive demo" in page
         assert "demo-banner" in page
         assert "thesis-panel" in page
@@ -747,6 +747,72 @@ def test_interactive_http_beat_api(tmp_path):
         with urlopen("http://127.0.0.1:18768/center.html", timeout=3) as resp:
             center = resp.read().decode("utf-8")
         assert "Coverage" in center
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_center_lists_custom_drafts_with_accept_cli(tmp_path):
+    from vantage_core.center import write_center_html
+    from vantage_core.suite import load_suite
+
+    after = json.loads(AFTER.read_text(encoding="utf-8"))
+    html_path = tmp_path / "center.html"
+    write_center_html(
+        html_path,
+        decision=after,
+        decision_path=tmp_path / "d.json",
+        suite=load_suite(DEMO_SUITE),
+        suite_path=DEMO_SUITE,
+        drafts=[
+            {
+                "id": "app.cite_token_v1",
+                "slug": "cite_token_v1",
+                "name": "demo-app — cite DOC-104",
+                "sources": ["policy.py"],
+                "quiet_miss": "drops DOC-104",
+                "confidence": 0.82,
+                "status": "draft",
+            }
+        ],
+        draft_actions="copy",
+    )
+    html = html_path.read_text(encoding="utf-8")
+    assert "Author next" in html
+    assert "app.cite_token_v1" in html
+    assert "vantage-core draft accept app.cite_token_v1" in html
+    assert "vantage-core draft skip" in html
+    assert "vantage-core draft refine" in html
+    assert "Accept" in html
+    assert "center --serve" in html
+    assert "Pending until a PASS" in html or "Pending" in html
+
+
+def test_interactive_demo_seeds_authorized_draft(tmp_path):
+    from urllib.request import Request, urlopen
+
+    from vantage_core.center_demo import run_interactive
+
+    server = run_interactive(
+        out=tmp_path, port=18769, open_browser=False, block=False
+    )
+    try:
+        with urlopen("http://127.0.0.1:18769/center.html", timeout=5) as resp:
+            center = resp.read().decode("utf-8")
+        assert "app.cite_token_v1" in center
+        assert "Accept" in center
+        assert 'data-draft-act="accept"' in center
+        req = Request(
+            "http://127.0.0.1:18769/api/draft/accept",
+            data=json.dumps({"draft_id": "app.cite_token_v1"}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        assert payload.get("status") == "accepted"
+        assert list((tmp_path / "contracts").glob("*.yaml"))
+        assert (tmp_path / "suites" / "starter.suite.yaml").is_file()
     finally:
         server.shutdown()
         server.server_close()

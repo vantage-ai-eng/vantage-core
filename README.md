@@ -7,10 +7,11 @@ artifact — with optional **SHA/PR bind** — **no monorepo `server/` required*
 **Seat:** the free **CI still-trust gate** for the ship decision on paths you author —
 go/no-go across functionality, cost, reliability, safety, and compliance — not a better
 Opik / Braintrust / LangSmith experiment or trace UI. Observability inspects; Vantage decides.
-Ingest from their telemetry/exports (`ingest` → path plans + optional drafts); plug into CI;
-return the verdict.
+Ingest from their telemetry/exports (`ingest` → path plans + optional drafts) **or**
+`vantage-core draft .` (authorized repo / tests / ingest → custom contracts you Accept);
+plug into CI; return the verdict.
 
-**Version:** 0.1.18 — Demo docs + Coverage Gap · 0.1.17 Vantage blue · 0.1.16 DEMO chrome · 0.1.15 demo in wheel
+**Version:** 0.1.19 — Authorized custom draft + Center Accept · 0.1.18 Demo docs + Coverage Gap · 0.1.17 Vantage blue · 0.1.16 DEMO chrome · 0.1.15 demo in wheel
 
 Partner authoring: [CI · your suite](https://www.vantageai.cc/runtimeai/method/cicd#rai-cicd-custom-fixtures)
 
@@ -31,7 +32,36 @@ Or use a venv: `python3 -m venv .venv && source .venv/bin/activate && pip instal
 [PyPI](https://pypi.org/project/vantage-core/) · contributors: `pip install -e ./vantage-core` from a clone.
 
 Requires `OPENROUTER_API_KEY` (BYOK) for live model runs. Live runs fail loudly without it.
-`vantage-core attest` is separate: it needs `RUNTIMEAI_API_KEY` (a RuntimeAI Cloud key). Verify needs neither.
+`vantage-core attest` is separate: it needs `RUNTIMEAI_API_KEY` (a RuntimeAI Cloud `rai_live_…` key). Verify needs neither.
+Design partners without OpenRouter yet: ask us for a capped trial key (~$10) — prefer cheap models; frontier SKUs burn that balance fast.
+
+| Key | Needed for | Not needed for |
+|-----|------------|----------------|
+| `OPENROUTER_API_KEY` | Live `run` / `suite run` / CI gate | Demo offline, Center, report, verify |
+| `RUNTIMEAI_API_KEY` (`rai_live_…`) | `attest` + hosted HTTP API | Ship gate, demo, verify |
+
+## Use it as a GitHub Action
+
+Four lines. No workflow to author, no CLI to learn first.
+
+```yaml
+- uses: vantage-ai-eng/vantage-core@v1
+  with:
+    suite: suites/starter.suite.yaml
+    openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+```
+
+The check re-runs your suite on every pull request, compares it against the last
+decision recorded on your default branch, and fails the build when a path that
+passed before stops passing. The verdict is posted as a PR comment and the dated
+decision artifact is attached to the run.
+
+Exit codes: **0** pass · **2** review · **1** block. By default only `block`
+fails the build — set `fail-on: review` to gate on both, or `fail-on: never` to
+report without blocking while you tune the suite.
+
+Full inputs and outputs are in [`action.yml`](action.yml). To generate a plain
+workflow instead of using the Action, `vantage-core ci stub github` still emits one.
 
 ## Stranger path (under 30 min)
 
@@ -70,13 +100,28 @@ Clone of this repo also has the same fixtures under [`examples/decisions/`](exam
 **B — Scaffold your own (partner authors — we don’t write your suite)**
 
 ```bash
-vantage-core init
+vantage-core init --ci
 # → samples/     known-good demo pack (run as-is)
 # → contracts/   editable starters + TEMPLATE — make these yours
 # → suites/starter.suite.yaml
+# → .github/workflows/vantage-core-suite-gate.yml
 # → decisions/  README.md  .gitignore
 ```
 
+**B2 — Draft custom paths from what you authorize (recommended)**
+
+```bash
+vantage-core draft . --write-drafts ./contracts_drafts
+# optional: --tests path/to/tests --ingest export.json
+# optional grant snapshot (API key / PAT on *your* machine — not auto-write):
+#   vantage-core grant langsmith --project my-proj --out ./exports/ls.json
+#   vantage-core draft . --grant langsmith,github --github-repo owner/name
+vantage-core center --serve   # Author next: Accept / Skip / Refine
+# Accept writes contracts/ + appends the suite. One click — not a blank YAML page.
+vantage-core suite run ./suites/starter.suite.yaml --json --save decisions/
+```
+
+**Grant snapshot ≠ auto-write.** `grant` / `draft --grant` pulls a one-shot dump; you still Accept. Hosted browser OAuth (token with us) is paid-later.
 **C — Edit one path, validate, run your suite**
 
 ```bash
@@ -324,12 +369,20 @@ vantage-core validate scorecard.json
 
 Detached countersignature (**verify is live**, offline and free; **attest is live** on production):
 
+The decision JSON from `suite run` / `--save` is already the ship-gate artifact (exit **0 / 2 / 1**). Attestation is an **optional Vantage seal** on that artifact’s digest — audit / diligence — it does **not** change pass/fail.
+
 ```bash
 # after demo --save or suite run --save (dated file, not suite.json)
 export RUNTIMEAI_API_KEY=rai_live_…          # issuance (free in preview); not OPENROUTER_API_KEY
 vantage-core attest "$(vantage-core decisions latest)"
 vantage-core verify "$(vantage-core decisions latest)"   # sibling *.attestation.json; no network
 ```
+
+| | `attest` | `verify` |
+|---|----------|----------|
+| Key | `RUNTIMEAI_API_KEY` | none |
+| Network | POST digest + pins only (never decision body) | none (default: in-package keyring) |
+| Output | `*.attestation.json` | ok / fail + warnings |
 
 Default verify uses the keyring shipped in this package — no network. Design note: [`docs/ATTESTATION.md`](docs/ATTESTATION.md). Canonical published keys: https://www.vantageai.cc/runtimeai/attestation/keys.json
 
@@ -352,16 +405,20 @@ Cadence re-decide (`suite rerun --trigger cadence`) is the catch for silent same
    - Repository: this monorepo  
    - Workflow: `publish-vantage-core.yml`  
    - Environment: `pypi` (match the Actions environment)
-2. Bump `version` in `pyproject.toml`
-3. Tag and release:
+2. Bump `version` in `pyproject.toml` and merge to `main`
+3. **PyPI must not lag.** Prefer automatic sync:
+   - Workflow `sync-vantage-core-pypi.yml` creates tag `vantage-core-vX.Y.Z` + GitHub Release when main is ahead of PyPI (also runs daily).
+   - Or tag/release yourself immediately in the same session as the merge:
 
 ```bash
-git tag vantage-core-v0.1.11
-git push origin vantage-core-v0.1.11
+git tag vantage-core-v0.1.19
+git push origin vantage-core-v0.1.19
 # Create a GitHub Release for that tag → workflow publishes
 ```
 
 Or **Actions → Publish vantage-core to PyPI → Run workflow** with `confirm=publish`.
+
+Do **not** leave a Core version pin on the site / CLAIM-LEDGER while the wheel is still the previous release.
 
 **Manual / token fallback**
 
@@ -403,10 +460,19 @@ vantage-core ingest examples/ingest/braintrust_export_sample.json
 vantage-core ingest path/to/export.json --write-drafts ./contracts_drafts --force
 ```
 
-Then edit drafts → `suite run` / `suite rerun --baseline`.
-**Claim:** export/manual complement; drafts are suggestions until they own them.
+Then Accept in Control Center (`center --serve`) or `draft accept` → `suite run` /
+`suite rerun --baseline`.
+**Claim:** ingest is one input; drafts are suggestions until they Accept and own the bar.
 See `examples/ingest/README.md`.
 FAQ: https://www.vantageai.cc/runtimeai/faq#rai-faq-accelerate-authoring
+
+## Changelog (0.1.19)
+
+- **Authorized custom draft** — `vantage-core draft [REPO]` scans a local repo / tests / ingest export and writes 3–5 custom `runtimeai.contract/v1` files (`contracts_drafts/`). Ids come from *their* strings, not library scenarios.
+- **Accept / Skip / Refine** — CLI + Control Center Author next. Accept copies `contracts/` and appends the suite. `center --serve` runs Accept against the filesystem; static `center.html` keeps copy-commands.
+- **Grant snapshots** — `vantage-core grant langsmith|braintrust|github` and `draft --grant …` fetch a one-shot dump (API key / PAT / `gh` on their machine) into `.vantage-grant/`. Feeds draft; Accept still required. Not continuous bar sync. Hosted OAuth = paid-later.
+- **CI** — `ci stub --suite` and `draft accept --ci` point the required check at the accepted suite. Secret `OPENROUTER_API_KEY` only.
+- **MCP** — `runtimeai_draft_suite` (needs vantage-core; no OpenRouter). Emits Core contracts, not hosted sim JSON.
 
 ## Changelog (0.1.18)
 
@@ -423,7 +489,7 @@ FAQ: https://www.vantageai.cc/runtimeai/faq#rai-faq-accelerate-authoring
 ## Changelog (0.1.15)
 
 - **Control Center demo in the wheel** — `pip install vantage-core` then `vantage-core demo --interactive` (or `center --demo`) runs the full browser walkthrough: fixtures, Obs samples, fleet sim, report samples. No monorepo clone. Naming: **RuntimeAI Control Center**.
-- **Coverage** (from 0.1.14) — Live / Seen ungated / Pending / Stale on partner exports. `demo --interactive` / `demo --offline` mirror **0.1.18**.
+- **Coverage** (from 0.1.14) — Live / Seen ungated / Pending / Stale on partner exports. `demo --interactive` / `demo --offline` mirror **0.1.19**.
 
 ## Changelog (0.1.14)
 

@@ -1,4 +1,4 @@
-# Still-trust CI stubs (vantage-core 0.1.18)
+# Still-trust CI stubs (vantage-core 0.1.19)
 
 Required-check workflows that **re-decide vs last ship**, not a one-shot `suite run`.
 PR/push uses `--trigger change`. A weekly schedule uses `--trigger cadence`
@@ -16,7 +16,8 @@ vantage-core ci stub gitlab    # → .gitlab-ci.vantage-core.yml
 | [`github-actions-suite-gate.yml`](github-actions-suite-gate.yml) | GitHub Actions: restore last default-branch artifact → `suite rerun --baseline` on PRs (`--trigger change`) and weekly (`--trigger cadence`); record ship on `main`; `--ci-comment`; upload JSON + HTML + PDF + `center.html` |
 | [`gitlab-ci-suite-gate.yml`](gitlab-ci-suite-gate.yml) | GitLab CI include: same ritual with `CI_COMMIT_SHA` bind |
 
-**Secret:** `OPENROUTER_API_KEY` only. Mark the job as a required check.
+**Secret:** `OPENROUTER_API_KEY` only (their BYOK, or a capped design-partner trial key). Mark the job as a required check.
+No RuntimeAI `rai_live_…` key for the gate — that key is for optional `vantage-core attest` and the hosted HTTP API.
 
 First PR after a green default-branch run is when `--baseline` appears. Exit is the **current** gate (0 pass / 2 review / 1 block), not “same as last ship.”
 

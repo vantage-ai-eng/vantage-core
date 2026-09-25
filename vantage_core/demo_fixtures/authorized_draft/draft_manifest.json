@@ -1,0 +1,22 @@
+{
+  "schema": "runtimeai.draft_manifest/v1",
+  "generated_at": "2026-09-13T00:00:00Z",
+  "repo": "demo/authorized_repo",
+  "drafts": [
+    {
+      "id": "app.cite_token_v1",
+      "slug": "cite_token_v1",
+      "file": "app.cite_token_v1.draft.yaml",
+      "name": "demo-app — cite DOC-104",
+      "sources": ["demo/authorized_repo/policy.py"],
+      "quiet_miss": "policy claim without the required source tag",
+      "confidence": 0.82,
+      "status": "draft"
+    }
+  ],
+  "suggested_suite": {
+    "id": "app.release_paths_v1",
+    "paths": ["../contracts/cite_token_v1.yaml"]
+  },
+  "claim": "Custom drafts from authorized local artifacts. Accept required. Not a generic library suite. Not OAuth."
+}

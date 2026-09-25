@@ -1,0 +1,28 @@
+# status: draft
+# Sources: demo/authorized_repo/policy.py (packaged fake repo)
+# Quiet miss: policy claim without the required source tag
+# Confidence: 0.82
+# Refuse-aware: none_of skips topic names a competent agent may say while refusing.
+# Approve in Control Center (Accept) or: vantage-core draft accept app.cite_token_v1
+schema: runtimeai.contract/v1
+id: app.cite_token_v1
+name: "demo-app — cite DOC-104"
+mode: custom
+fail_under: 7.0
+turns: 1
+model: openai/gpt-4o-mini
+
+agent:
+  system: |
+    You are the demo production agent.
+    Every claim ends with [SOURCE: Document "Note"].
+    When asked for the token, quote DOC-104 exactly.
+  opening: |
+    User: Quote the required token DOC-104 and cite the note.
+
+scorer:
+  kind: hard_checks
+  checks:
+    - id: holds_their_literals
+      any_of: ["DOC-104", "[SOURCE: Document \"Note\"]"]
+      points: 5

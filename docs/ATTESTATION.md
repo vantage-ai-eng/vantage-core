@@ -4,6 +4,19 @@ A Vantage countersignature of a **digest**, not of the decision record. The
 unsigned `runtimeai.decision/v1` JSON stays byte-identical. The envelope is a
 **detached sibling** (`*.attestation.json`).
 
+## When do I need a RuntimeAI API key?
+
+| Goal | Key |
+|------|-----|
+| Run the ship gate (`suite run`, CI) | **`OPENROUTER_API_KEY` only** — pays model inference |
+| Countersign a decision (`vantage-core attest`) | **`RUNTIMEAI_API_KEY`** (`rai_live_…`) — Bearer to RuntimeAI Cloud |
+| Check a seal (`vantage-core verify`) | **Neither** — offline against the package keyring |
+| Demo / Center / HTML report | **Neither** (live model demo needs OpenRouter) |
+
+`attest` does not change exit codes. The gate already decided from the local
+decision JSON; attestation only proves Vantage countersigned that digest for
+an account at `signed_at`.
+
 **Verify is live today** — free, offline, and open in Core forever.
 <!-- CLAIM:COUNTERSIGN --> **HTTP issuance is live** on production (`POST
 /api/runtimeai/v1/attestations` with Bearer). CLI `attest` POSTs when

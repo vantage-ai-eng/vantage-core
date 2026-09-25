@@ -685,6 +685,8 @@ def write_center_html(
     ingest_path: Path | None = None,
     history: list[tuple[Path, dict[str, Any]]] | None = None,
     fleet: dict[str, Any] | None = None,
+    drafts: list[dict[str, Any]] | None = None,
+    draft_actions: str = "copy",
 ) -> Path:
     """Render Center HTML to dest (creates parents)."""
     model = build_center_model(
@@ -696,6 +698,8 @@ def write_center_html(
         ingest_path=ingest_path,
         history=history,
         fleet=fleet,
+        drafts=drafts,
+        draft_actions=draft_actions,
     )
     dest = Path(dest).expanduser()
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -713,6 +717,8 @@ def build_center_model(
     ingest_path: Path | None = None,
     history: list[tuple[Path, dict[str, Any]]] | None = None,
     fleet: dict[str, Any] | None = None,
+    drafts: list[dict[str, Any]] | None = None,
+    draft_actions: str = "copy",
 ) -> dict[str, Any]:
     """Compose Center view-model from existing files (read-only)."""
     report = extract_report_model(decision) if decision else None
@@ -932,6 +938,29 @@ def build_center_model(
         ingest_out=ingest_out,
         last_pass=last_pass,
     )
+    custom_drafts = [d for d in (drafts or []) if isinstance(d, dict) and d.get("id")]
+    if custom_drafts:
+        if coverage is None:
+            coverage = {
+                "rows": [],
+                "counts": {"live": 0, "seen_ungated": 0, "gap": 0, "pending": 0, "stale": 0},
+                "claim": "Drafts are Pending until a ship-cleared PASS exists.",
+            }
+        rows = list(coverage.get("rows") or [])
+        counts = dict(coverage.get("counts") or {})
+        for d in custom_drafts:
+            rows.append(
+                {
+                    "id": d.get("id"),
+                    "name": d.get("name") or d.get("id"),
+                    "state": "pending",
+                    "note": "Draft — Accept to land in contracts/; Pending until a PASS exists",
+                    "kind": "draft",
+                }
+            )
+            counts["pending"] = int(counts.get("pending") or 0) + 1
+        coverage["rows"] = rows
+        coverage["counts"] = counts
 
     # Activity rollup from history
     n = len(history_rows)
@@ -951,6 +980,10 @@ def build_center_model(
         ),
         "run": f"vantage-core suite run {cli_suite} --json --save decisions/",
         "ingest": "vantage-core ingest export.json --write-drafts ./contracts_drafts",
+        "draft": "vantage-core draft . --write-drafts ./contracts_drafts",
+        "draft_list": "vantage-core draft list",
+        "draft_accept": "vantage-core draft accept <draft_id>",
+        "center_serve": "vantage-core center --serve",
         "ingest_plan": "vantage-core ingest export.json --json",
         "report": (
             'vantage-core report "$(vantage-core decisions latest)" '
@@ -1000,6 +1033,8 @@ def build_center_model(
         "commands": commands,
         "has_decision": decision is not None,
         "fleet": fleet,
+        "drafts": list(drafts or []),
+        "draft_actions": draft_actions if draft_actions in ("copy", "live") else "copy",
         "rendered_at": datetime.now(timezone.utc)
         .replace(microsecond=0)
         .isoformat()
@@ -1167,6 +1202,8 @@ def center_to_html(model: dict[str, Any]) -> str:
     n_seen = int(cov_counts.get("seen_ungated") or 0)
     n_gap = int(cov_counts.get("gap") or 0)
     n_pending = int(cov_counts.get("pending") or 0)
+    custom_drafts = [d for d in (model.get("drafts") or []) if isinstance(d, dict) and d.get("id")]
+    live_drafts = str(model.get("draft_actions") or "copy") == "live"
 
     if not model.get("has_decision"):
         next_label = "Run your suite once"
@@ -1177,6 +1214,9 @@ def center_to_html(model: dict[str, Any]) -> str:
     elif n_seen:
         next_label = "Author the next path from your export (seen, ungated)"
         next_cmd = cmds.get("ingest") or ""
+    elif custom_drafts:
+        next_label = "Accept a custom draft — one click, you own the bar"
+        next_cmd = cmds.get("draft_list") or "vantage-core draft list"
     elif n_gap:
         next_label = "Author a coverage gap (no export evidence yet — use starter)"
         next_cmd = cmds.get("ingest") or ""
@@ -1412,8 +1452,37 @@ def center_to_html(model: dict[str, Any]) -> str:
     </section>"""
 
     plan_html = ""
-    if author_next:
+    if custom_drafts or author_next:
         rows = []
+        for d in custom_drafts:
+            did = str(d.get("id") or "")
+            name = d.get("name") or did
+            src = ", ".join(d.get("sources") or []) or "—"
+            quiet = d.get("quiet_miss") or ""
+            conf = d.get("confidence")
+            conf_s = f"{float(conf):.2f}" if isinstance(conf, (int, float)) else "—"
+            if live_drafts:
+                acts = (
+                    f'<button type="button" class="draft-act" data-draft-act="accept" data-draft-id="{_esc(did)}">Accept</button>'
+                    f'<button type="button" class="draft-act" data-draft-act="skip" data-draft-id="{_esc(did)}">Skip</button>'
+                    f'<button type="button" class="draft-act" data-draft-act="refine" data-draft-id="{_esc(did)}">Refine</button>'
+                )
+            else:
+                acts = (
+                    f'<div class="muted">Accept · <code>vantage-core draft accept {_esc(did)}</code></div>'
+                    f'<div class="muted">Skip · <code>vantage-core draft skip {_esc(did)}</code></div>'
+                    f'<div class="muted">Refine · <code>vantage-core draft refine {_esc(did)}</code></div>'
+                )
+            rows.append(
+                "<tr>"
+                f"<td class='pri'>{_esc(conf_s)}</td>"
+                f"<td><strong>{_esc(name)}</strong>"
+                f"<div class=\"muted\"><code>{_esc(did)}</code></div>"
+                f"{f'<div class=\"why\">{_esc(quiet)}</div>' if quiet else ''}"
+                f"<div class=\"muted\">sources · {_esc(src)}</div>"
+                f"{acts}</td>"
+                "</tr>"
+            )
         for s in author_next:
             sev = str(s.get("severity") or "").upper() or "—"
             name = s.get("name") or s.get("slug") or "—"
@@ -1431,16 +1500,26 @@ def center_to_html(model: dict[str, Any]) -> str:
                 "</tr>"
             )
         author_h2 = "1 · Author next" if dual_jobs else "Author next"
+        static_note = (
+            "<p class='muted'>Static center.html export — copy the CLI. "
+            "In a real project directory, <code>vantage-core center --serve</code> runs Accept against the filesystem.</p>"
+            if not live_drafts
+            else "<p class='muted'>Accept copies YAML into <code>contracts/</code> and appends the suite. Approve is this click — not a blank YAML page.</p>"
+        )
+        copy_cmd = cmds.get("draft_list") or "vantage-core draft list"
+        ingest_cmd = cmds.get("ingest") or ""
         plan_html = f"""
     <section class="intake">
       <h2>{author_h2}</h2>
-      <p class="muted">From your export — suggestions only; you own the suite bar. Paths already in the suite are omitted.</p>
+      <p class="muted">Custom drafts from artifacts you authorized (repo / tests / ingest). Suggestions only; you own the suite bar after Accept. Not a generic library suite.</p>
       <table>
-        <thead><tr><th>Sev</th><th>Candidate path</th></tr></thead>
+        <thead><tr><th>Conf</th><th>Candidate path</th></tr></thead>
         <tbody>{''.join(rows)}</tbody>
       </table>
-      <p class="next-label" style="margin-top:0.75rem;font-size:0.95rem">Write draft contracts</p>
-      <pre>{_esc(cmds.get('ingest') or '')}</pre>
+      {static_note}
+      <p class="next-label" style="margin-top:0.75rem;font-size:0.95rem">CLI equivalent</p>
+      <pre>{_esc(copy_cmd)}</pre>
+      {f'<p class="next-label" style="margin-top:0.5rem;font-size:0.95rem">Write ingest drafts</p><pre>{_esc(ingest_cmd)}</pre>' if ingest_cmd and author_next else ''}
     </section>"""
     elif model.get("ingest"):
         author_h2 = "1 · Author next" if dual_jobs else "Author next"
@@ -1470,6 +1549,28 @@ def center_to_html(model: dict[str, Any]) -> str:
             f"<p class='muted' style='margin:0 0 0.5rem'>Focused suite detail · "
             f"<code>{_esc(model.get('suite_id') or suite_title)}</code></p>"
         )
+
+    draft_js = ""
+    if live_drafts:
+        draft_js = """
+  <script>
+    document.querySelectorAll("[data-draft-act]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var act = btn.getAttribute("data-draft-act");
+        var id = btn.getAttribute("data-draft-id");
+        fetch("/api/draft/" + act, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({draft_id: id})
+        }).then(function (r) { return r.json().then(function (j) { return {ok: r.ok, j: j}; }); })
+          .then(function (res) {
+            if (!res.ok) { alert(res.j.error || "draft action failed"); return; }
+            if (act === "refine" && res.j.path) { window.location = "/drafts/" + encodeURIComponent(res.j.file || ""); return; }
+            window.location.reload();
+          }).catch(function (err) { alert(String(err)); });
+      });
+    });
+  </script>"""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1529,6 +1630,13 @@ def center_to_html(model: dict[str, Any]) -> str:
     section.next {{ border-color: #a8a29e; }}
     section.memory .lead, section.fleet .lead {{ margin: 0 0 0.35rem; font-weight: 600; }}
     section.intake {{ border-style: dashed; }}
+    .draft-act {{
+      display: inline-block; margin: 0.35rem 0.35rem 0 0; padding: 0.28rem 0.55rem;
+      font: inherit; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.03em;
+      cursor: pointer; background: var(--brand-bg); color: var(--brand-deep);
+      border: 1px solid var(--brand-border);
+    }}
+    .draft-act:hover {{ background: #fff; }}
     section.export-jobs {{ border-color: var(--brand); background: var(--brand-bg); }}
     section.export-jobs .lead {{ margin: 0 0 0.35rem; font-size: 0.95rem; line-height: 1.5; }}
     section.export-jobs .fuel-quote {{
@@ -1628,6 +1736,7 @@ def center_to_html(model: dict[str, Any]) -> str:
       <p>CI owns ship/stop per suite. Control Center is the cockpit (fleet register is advisory). · vantage-core {_esc(model.get('renderer_version'))} · {_esc(model.get('rendered_at'))}</p>
     </footer>
   </div>
+{draft_js}
 </body>
 </html>
 """
@@ -1638,6 +1747,126 @@ def load_ingest_json(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"ingest root must be an object: {path}")
     return data
+
+
+def serve_center(
+    *,
+    root: str | Path | None = None,
+    dest: Path,
+    port: int = 8766,
+    open_browser: bool = True,
+    block: bool = True,
+    refresh,
+) -> Any:
+    """HTTP cockpit over a real project directory — Accept writes the filesystem.
+
+    Static ``center.html`` export stays copy-commands only.
+    """
+    import json as json_lib
+    import threading
+    import webbrowser
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from urllib.parse import unquote, urlparse
+
+    from vantage_core.draft import accept_draft, refine_draft_path, skip_draft
+
+    work = Path(root or Path.cwd()).expanduser().resolve()
+
+    class Bound(BaseHTTPRequestHandler):
+        def log_message(self, fmt: str, *args: Any) -> None:
+            return
+
+        def _json(self, code: int, payload: dict[str, Any]) -> None:
+            raw = json_lib.dumps(payload).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def _bytes(self, code: int, body: bytes, content_type: str) -> None:
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self) -> None:  # noqa: N802
+            path = urlparse(self.path).path
+            if path in ("/", "/index.html", "/center.html"):
+                refresh()
+                html = dest.read_bytes() if dest.is_file() else b"<p>center missing</p>"
+                self._bytes(200, html, "text/html; charset=utf-8")
+                return
+            if path.startswith("/drafts/"):
+                name = unquote(path.rsplit("/", 1)[-1])
+                f = work / "contracts_drafts" / name
+                if f.is_file() and ".." not in name:
+                    self._bytes(200, f.read_bytes(), "text/plain; charset=utf-8")
+                    return
+                self._json(404, {"error": "draft not found"})
+                return
+            self._json(404, {"error": "not found"})
+
+        def do_POST(self) -> None:  # noqa: N802
+            path = urlparse(self.path).path
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                payload = json_lib.loads(raw.decode("utf-8") or "{}")
+            except json_lib.JSONDecodeError:
+                payload = {}
+            draft_id = str(payload.get("draft_id") or "")
+            if not draft_id:
+                self._json(400, {"error": "draft_id required"})
+                return
+            try:
+                if path == "/api/draft/accept":
+                    result = accept_draft(
+                        draft_id,
+                        drafts=work / "contracts_drafts",
+                        into=work / "contracts",
+                        suite=work / "suites" / "starter.suite.yaml",
+                        root=work,
+                    )
+                    refresh()
+                    self._json(200, result)
+                    return
+                if path == "/api/draft/skip":
+                    result = skip_draft(draft_id, drafts=work / "contracts_drafts")
+                    refresh()
+                    self._json(200, result)
+                    return
+                if path == "/api/draft/refine":
+                    p = refine_draft_path(draft_id, drafts=work / "contracts_drafts")
+                    self._json(200, {"path": str(p), "file": p.name, "id": draft_id})
+                    return
+            except FileNotFoundError as exc:
+                self._json(404, {"error": str(exc)})
+                return
+            except Exception as exc:
+                self._json(500, {"error": str(exc)})
+                return
+            self._json(404, {"error": "not found"})
+
+    server = ThreadingHTTPServer(("127.0.0.1", port), Bound)
+    url = f"http://127.0.0.1:{port}/"
+    print(f"RuntimeAI Control Center → {url}", flush=True)
+    print(f"workdir {work}  ·  Accept writes contracts/ + suite", flush=True)
+    print("Ctrl+C to stop.", flush=True)
+    if open_browser:
+        threading.Timer(0.35, lambda: webbrowser.open(url)).start()
+    if block:
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print("\nstopped", flush=True)
+        finally:
+            server.server_close()
+    else:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
 
 
 __all__ = [

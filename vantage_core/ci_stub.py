@@ -12,6 +12,7 @@ from pathlib import Path
 
 GITHUB_DEFAULT = Path(".github/workflows/vantage-core-suite-gate.yml")
 GITLAB_DEFAULT = Path(".gitlab-ci.vantage-core.yml")
+DEFAULT_SUITE = "suites/starter.suite.yaml"
 
 GITHUB_SUITE_GATE_YAML = """\
 # Still-trust suite gate — mark as a required check on the protected branch.
@@ -21,9 +22,10 @@ GITHUB_SUITE_GATE_YAML = """\
 # Comment: bind headline + compare_to_baseline (pull-requests: write)
 # Memo: suite.html (+ suite.pdf) + Control Center (center.html) as artifacts — not a Cloud dashboard.
 #
-# Requires vantage-core 0.1.18  ·  secret: OPENROUTER_API_KEY
+# Requires vantage-core 0.1.19  ·  secret: OPENROUTER_API_KEY
 # First PR after a green default-branch run is when --baseline appears.
 # Cadence does not observe silent same-id drift; it re-decides.
+# Point this workflow at the *accepted* suite (draft accept → contracts/ + suite).
 name: vantage-core suite gate
 
 on:
@@ -121,7 +123,7 @@ jobs:
 """
 
 GITLAB_SUITE_GATE_YAML = """\
-# vantage-core still-trust suite gate (0.1.18)
+# vantage-core still-trust suite gate (0.1.19)
 # Include from .gitlab-ci.yml:
 #   include:
 #     - local: .gitlab-ci.vantage-core.yml
@@ -198,12 +200,12 @@ suite-gate:
 """
 
 
-def github_suite_gate_yaml() -> str:
-    return GITHUB_SUITE_GATE_YAML
+def github_suite_gate_yaml(*, suite: str = DEFAULT_SUITE) -> str:
+    return GITHUB_SUITE_GATE_YAML.replace(DEFAULT_SUITE, suite or DEFAULT_SUITE)
 
 
-def gitlab_suite_gate_yaml() -> str:
-    return GITLAB_SUITE_GATE_YAML
+def gitlab_suite_gate_yaml(*, suite: str = DEFAULT_SUITE) -> str:
+    return GITLAB_SUITE_GATE_YAML.replace(DEFAULT_SUITE, suite or DEFAULT_SUITE)
 
 
 def default_stub_path(kind: str) -> Path:
@@ -214,18 +216,24 @@ def default_stub_path(kind: str) -> Path:
     raise ValueError(f"unknown CI stub kind: {kind}")
 
 
-def stub_body(kind: str) -> str:
+def stub_body(kind: str, *, suite: str = DEFAULT_SUITE) -> str:
     if kind == "github":
-        return github_suite_gate_yaml()
+        return github_suite_gate_yaml(suite=suite)
     if kind == "gitlab":
-        return gitlab_suite_gate_yaml()
+        return gitlab_suite_gate_yaml(suite=suite)
     raise ValueError(f"unknown CI stub kind: {kind}")
 
 
-def write_stub(kind: str, dest: str | Path, *, force: bool = False) -> Path:
+def write_stub(
+    kind: str,
+    dest: str | Path,
+    *,
+    force: bool = False,
+    suite: str = DEFAULT_SUITE,
+) -> Path:
     path = Path(dest).expanduser().resolve()
     if path.exists() and not force:
         raise FileExistsError(f"refusing to overwrite {path} (pass --force)")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(stub_body(kind), encoding="utf-8")
+    path.write_text(stub_body(kind, suite=suite), encoding="utf-8")
     return path

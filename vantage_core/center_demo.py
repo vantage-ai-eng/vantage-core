@@ -172,8 +172,19 @@ def _write_center(
         fleet=fleet,
         ingest=_maybe_ingest(decisions),
         ingest_path=_ingest_path(decisions),
+        drafts=_maybe_drafts(work),
+        draft_actions="live",
     )
     return dest
+
+
+def _maybe_drafts(work: Path) -> list[dict[str, Any]]:
+    try:
+        from vantage_core.draft import load_center_drafts
+
+        return load_center_drafts(work / "contracts_drafts")
+    except Exception:
+        return []
 
 
 def _ingest_path(decisions: Path) -> Path | None:
@@ -1339,6 +1350,14 @@ class _Handler(BaseHTTPRequestHandler):
                     suite_json = self.work / "decisions" / "suite.json"
             self._bytes(200, suite_json.read_bytes(), "application/json; charset=utf-8")
             return
+        if path.startswith("/drafts/"):
+            name = unquote(path.rsplit("/", 1)[-1])
+            f = self.work / "contracts_drafts" / name
+            if f.is_file() and ".." not in name:
+                self._bytes(200, f.read_bytes(), "text/plain; charset=utf-8")
+                return
+            self._json(404, {"error": "draft not found"})
+            return
         self._json(404, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
@@ -1356,6 +1375,51 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json(500, {"error": str(exc)})
             return
+        if path.startswith("/api/draft/"):
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                payload = json.loads(raw.decode("utf-8") or "{}")
+            except json.JSONDecodeError:
+                payload = {}
+            draft_id = str(payload.get("draft_id") or "")
+            act = path.rsplit("/", 1)[-1]
+            if not draft_id:
+                self._json(400, {"error": "draft_id required"})
+                return
+            try:
+                from vantage_core.draft import accept_draft, refine_draft_path, skip_draft
+
+                if act == "accept":
+                    result = accept_draft(
+                        draft_id,
+                        drafts=self.work / "contracts_drafts",
+                        into=self.work / "contracts",
+                        suite=self.work / "suites" / "starter.suite.yaml",
+                        root=self.work,
+                    )
+                    from vantage_core.ledger import latest_decision_path, load_decision
+
+                    decisions = self.work / "decisions"
+                    dp = latest_decision_path(decisions) if decisions.is_dir() else None
+                    decision = load_decision(dp) if dp else None
+                    _write_center(self.work, decision=decision, decision_path=dp)
+                    self._json(200, result)
+                    return
+                if act == "skip":
+                    result = skip_draft(draft_id, drafts=self.work / "contracts_drafts")
+                    self._json(200, result)
+                    return
+                if act == "refine":
+                    p = refine_draft_path(draft_id, drafts=self.work / "contracts_drafts")
+                    self._json(200, {"path": str(p), "file": p.name, "id": draft_id})
+                    return
+            except FileNotFoundError as exc:
+                self._json(404, {"error": str(exc)})
+                return
+            except Exception as exc:
+                self._json(500, {"error": str(exc)})
+                return
         self._json(404, {"error": "not found"})
 
 
@@ -1370,6 +1434,12 @@ def run_interactive(
     work = Path(out).expanduser().resolve()
     work.mkdir(parents=True, exist_ok=True)
     (work / "decisions").mkdir(parents=True, exist_ok=True)
+    try:
+        from vantage_core.draft import seed_demo_authorized_drafts
+
+        seed_demo_authorized_drafts(work)
+    except Exception:
+        pass
 
     class Bound(_Handler):
         pass

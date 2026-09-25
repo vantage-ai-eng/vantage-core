@@ -356,6 +356,262 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _open_in_editor(paths: list[str], *, editor: str | None = None) -> int:
+    """Open files in $VISUAL / $EDITOR / macOS TextEdit. Reused by yamls + draft refine."""
+    import subprocess
+
+    if not paths:
+        print("No files to open", file=sys.stderr)
+        return 1
+    cmd = (editor or os.environ.get("VISUAL") or os.environ.get("EDITOR") or "").strip()
+    try:
+        if cmd:
+            subprocess.run([cmd, *paths], check=False)
+        elif sys.platform == "darwin":
+            subprocess.run(["open", "-t", *paths], check=False)
+        else:
+            print("Set $EDITOR or pass --editor to open files", file=sys.stderr)
+            return 1
+    except Exception as exc:
+        print(f"failed to open editor: {exc}", file=sys.stderr)
+        return 1
+    print(f"opened {len(paths)} file(s) for editing")
+    return 0
+
+
+def cmd_grant(args: argparse.Namespace) -> int:
+    """Fetch a one-shot grant snapshot (API key / PAT on their machine)."""
+    from vantage_core.grant import (
+        apply_grants,
+        grant_braintrust,
+        grant_github,
+        grant_langsmith,
+        parse_grant_list,
+    )
+
+    source = str(getattr(args, "source", "") or "").strip().lower()
+    force = bool(getattr(args, "force", False))
+    # Positional owner/name for `grant github owner/repo`
+    repo_arg = getattr(args, "repo", None)
+    try:
+        if source in {"langsmith", "ls"}:
+            project = getattr(args, "project", None) or ""
+            if not project:
+                print("grant langsmith requires --project", file=sys.stderr)
+                return 2
+            out = getattr(args, "out", None) or "./exports/langsmith.json"
+            path = grant_langsmith(
+                project=project,
+                out=out,
+                force=force,
+                limit=int(getattr(args, "limit", 100) or 100),
+            )
+            if args.json:
+                print(json.dumps({"source": "langsmith", "path": str(path)}, indent=2))
+            else:
+                print(f"grant   langsmith → {path}")
+                print(f"Next:   vantage-core draft . --ingest {path}")
+                print("Claim:  snapshot grant. Accept required. Not auto-write.")
+            return 0
+        if source in {"braintrust", "bt"}:
+            experiment = getattr(args, "experiment", None) or ""
+            if not experiment:
+                print("grant braintrust requires --experiment", file=sys.stderr)
+                return 2
+            out = getattr(args, "out", None) or "./exports/braintrust.json"
+            path = grant_braintrust(
+                experiment=experiment,
+                out=out,
+                force=force,
+                limit=int(getattr(args, "limit", 100) or 100),
+            )
+            if args.json:
+                print(json.dumps({"source": "braintrust", "path": str(path)}, indent=2))
+            else:
+                print(f"grant   braintrust → {path}")
+                print(f"Next:   vantage-core draft . --ingest {path}")
+                print("Claim:  snapshot grant. Accept required. Not auto-write.")
+            return 0
+        if source in {"github", "gh"}:
+            repo = repo_arg or ""
+            if not repo:
+                print("grant github requires owner/name", file=sys.stderr)
+                return 2
+            out = getattr(args, "out", None) or "./.vantage-grant/repo"
+            dest = grant_github(
+                repo,
+                out=out,
+                path=str(getattr(args, "path", "") or ""),
+                ref=getattr(args, "ref", None),
+                force=force,
+            )
+            if args.json:
+                print(json.dumps({"source": "github", "path": str(dest)}, indent=2))
+            else:
+                print(f"grant   github {repo} → {dest}")
+                print(f"Next:   vantage-core draft {dest}")
+                print("Claim:  sparse snapshot. Accept required. Not auto-write.")
+            return 0
+        # Combined comma-list into .vantage-grant/
+        if "," in source:
+            sources = parse_grant_list(source)
+            result = apply_grants(
+                sources,
+                root=getattr(args, "root", None) or ".",
+                github_repo=repo_arg,
+                langsmith_project=getattr(args, "project", None),
+                braintrust_experiment=getattr(args, "experiment", None),
+                github_path=str(getattr(args, "path", "") or ""),
+                github_ref=getattr(args, "ref", None),
+                force=force,
+            )
+            if args.json:
+                print(json.dumps(result, indent=2))
+            else:
+                print(f"grant   {', '.join(result.get('sources') or [])}")
+                for f in result.get("files") or []:
+                    print(f"  wrote {f}")
+                print(result.get("claim") or "")
+            return 0
+        print(f"unknown grant source {source!r} — use langsmith|braintrust|github", file=sys.stderr)
+        return 2
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"vantage-core grant failed: {exc}", file=sys.stderr)
+        return 1
+
+
+def cmd_draft(args: argparse.Namespace) -> int:
+    """Scan authorized artifacts → custom contract drafts; accept / skip / refine."""
+    from vantage_core.draft import (
+        accept_draft,
+        analyze_and_draft,
+        format_draft_report,
+        is_draft_action,
+        list_drafts,
+        refine_draft_path,
+        show_draft,
+        skip_draft,
+    )
+
+    write_dir = getattr(args, "write_drafts", None) or "./contracts_drafts"
+    token = str(getattr(args, "repo_or_action", None) or ".").strip()
+    draft_id = getattr(args, "draft_id", None)
+
+    if is_draft_action(token):
+        action = token.lower()
+        if action == "list":
+            rows = list_drafts(write_dir)
+            if args.json:
+                print(json.dumps({"drafts": rows}, indent=2))
+                return 0
+            if not rows:
+                print("No drafts. Run: vantage-core draft . --write-drafts ./contracts_drafts")
+                return 0
+            for i, row in enumerate(rows, start=1):
+                print(f"  {i}. {row.get('id')}  [{row.get('status') or 'draft'}]  — {row.get('name')}")
+                if row.get("quiet_miss"):
+                    print(f"     quiet miss: {row.get('quiet_miss')}")
+                print(f"     vantage-core draft accept {row.get('id')}")
+            return 0
+        if not draft_id:
+            print(f"draft {action} requires <draft_id>", file=sys.stderr)
+            return 2
+        try:
+            if action == "show":
+                row, yaml_text = show_draft(str(draft_id), directory=write_dir)
+                if args.json:
+                    print(json.dumps({"draft": row, "yaml": yaml_text}, indent=2))
+                else:
+                    print(yaml_text)
+                return 0
+            if action == "skip":
+                row = skip_draft(str(draft_id), drafts=write_dir)
+                if args.json:
+                    print(json.dumps(row, indent=2))
+                else:
+                    print(f"skipped {row.get('id')}")
+                return 0
+            if action == "refine":
+                path = refine_draft_path(str(draft_id), drafts=write_dir)
+                editor = getattr(args, "editor", None)
+                if args.json:
+                    print(json.dumps({"id": draft_id, "path": str(path)}, indent=2))
+                    return 0
+                return _open_in_editor([str(path)], editor=editor)
+            if action == "accept":
+                result = accept_draft(
+                    str(draft_id),
+                    drafts=write_dir,
+                    into=getattr(args, "into", None) or "./contracts",
+                    suite=getattr(args, "suite", None) or "./suites/starter.suite.yaml",
+                    ci=bool(getattr(args, "ci", False)),
+                )
+                if args.json:
+                    print(json.dumps(result, indent=2))
+                else:
+                    print(f"accepted {result.get('id')}")
+                    print(f"contract {result.get('contract')}")
+                    print(f"suite    {result.get('suite')}")
+                    if result.get("ci"):
+                        print(f"ci       {result.get('ci')}  ·  secret OPENROUTER_API_KEY")
+                    print("Next: vantage-core suite run suites/starter.suite.yaml --save decisions/")
+                return 0
+        except FileNotFoundError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"unknown draft action {action}", file=sys.stderr)
+        return 2
+
+    repo = token or "."
+    ingest = getattr(args, "ingest", None)
+    grant_raw = getattr(args, "grant", None)
+    try:
+        if grant_raw:
+            from vantage_core.grant import apply_grants, parse_grant_list
+
+            sources = parse_grant_list(str(grant_raw))
+            granted = apply_grants(
+                sources,
+                root=repo if Path(repo).is_dir() else ".",
+                github_repo=getattr(args, "github_repo", None),
+                langsmith_project=getattr(args, "langsmith_project", None),
+                braintrust_experiment=getattr(args, "braintrust_experiment", None),
+                github_path=str(getattr(args, "github_path", "") or ""),
+                github_ref=getattr(args, "github_ref", None),
+                force=True,
+            )
+            if granted.get("repo"):
+                repo = str(granted["repo"])
+            if granted.get("ingest") and not ingest:
+                ingest = str(granted["ingest"])
+            print(
+                f"grant   {', '.join(granted.get('sources') or [])} → {granted.get('grant_dir')}",
+                file=sys.stderr,
+            )
+        result = analyze_and_draft(
+            repo,
+            ingest=ingest,
+            tests=getattr(args, "tests", None),
+            write_dir=write_dir,
+            suite=getattr(args, "suite", None),
+            force=bool(getattr(args, "force", False)),
+        )
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except (RuntimeError, ValueError) as exc:
+        print(f"vantage-core draft failed: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"vantage-core draft failed: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2, default=str))
+    else:
+        print(format_draft_report(result))
+    return 0 if result.get("drafts") else 0
+
+
 def cmd_schema(_args: argparse.Namespace) -> int:
     pkg_dir = Path(__file__).resolve().parent
     schema_path = pkg_dir / "schemas" / "decision_object.v1.json"
@@ -1214,7 +1470,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
         dest = root / default_stub_path("github")
         try:
-            written = write_stub("github", dest, force=args.force)
+            written = write_stub("github", dest, force=args.force, suite="suites/starter.suite.yaml")
             print(f"wrote {written}")
         except FileExistsError:
             print(f"skip  {dest} (exists — pass --force to overwrite)")
@@ -1226,15 +1482,17 @@ def cmd_init(args: argparse.Namespace) -> int:
     suite = suites_dir / "starter.suite.yaml"
     demo_suite = samples_dir / "demo.suite.yaml"
     print()
-    print("Partner authors paths — we don't write your suite.")
+    print("Partner authors paths — we draft from authorized artifacts; you Accept the bar.")
     print("Next:")
     print(f"  Demo:  vantage-core demo")
     print(f"         # or: vantage-core suite run {demo_suite} --json")
+    print("  Draft: vantage-core draft . --write-drafts ./contracts_drafts")
+    print("         vantage-core center --serve   # Accept / Skip / Refine")
     print(f"  Yours: Edit {first if first.exists() else contracts}")
     print(f"         vantage-core suite validate {suite}")
     print(f"         export OPENROUTER_API_KEY=sk-or-...   # BYOK")
     print(f"         vantage-core suite run {suite} --json --save decisions/")
-    print("  CI:    vantage-core ci stub github   # still-trust required check")
+    print("  CI:    vantage-core ci stub github --suite suites/starter.suite.yaml")
     print("         vantage-core report \"$(vantage-core decisions latest)\" --html decisions/suite.html")
     if not written and not args.force:
         print("No new contract files written. Edit existing or use --force.")
@@ -1392,26 +1650,7 @@ def cmd_yamls(args: argparse.Namespace) -> int:
         if not paths:
             print("No YAML files to open", file=sys.stderr)
             return 1
-        editor = (args.editor or os.environ.get("VISUAL") or os.environ.get("EDITOR") or "").strip()
-        try:
-            if editor:
-                subprocess.run([editor, *paths], check=False)
-            elif sys.platform == "darwin":
-                # TextEdit / default app — multiple files
-                subprocess.run(["open", "-t", *paths], check=False)
-            elif sys.platform.startswith("linux"):
-                subprocess.run(["xdg-open", paths[0]], check=False)
-                for extra in paths[1:]:
-                    subprocess.run(["xdg-open", extra], check=False)
-            else:
-                print("Set $EDITOR or pass --editor to open files", file=sys.stderr)
-                for p in paths:
-                    print(f"  {p}")
-                return 1
-        except Exception as exc:
-            print(f"failed to open editor: {exc}", file=sys.stderr)
-            return 1
-        print(f"opened {len(paths)} file(s) for editing")
+        return _open_in_editor(paths, editor=args.editor)
 
     return 0
 
@@ -1441,6 +1680,7 @@ def cmd_center(args: argparse.Namespace) -> int:
         pick_focus_suite_id,
         write_center_html,
     )
+    from vantage_core.draft import load_center_drafts
     from vantage_core.ledger import latest_decision_path, load_decision
     from vantage_core.suite import load_suite
 
@@ -1546,12 +1786,20 @@ def cmd_center(args: argparse.Namespace) -> int:
             print(f"failed to read ingest: {exc}", file=sys.stderr)
             return 2
 
+    drafts_rows: list = []
+    try:
+        drafts_rows = load_center_drafts(cwd / "contracts_drafts")
+    except Exception:
+        drafts_rows = []
+
+    live = bool(getattr(args, "serve", False))
+
     html_out = getattr(args, "html", None) or str(decisions_dir / "center.html")
     dest = Path(html_out).expanduser()
     if not dest.is_absolute():
         dest = (cwd / dest).resolve()
 
-    try:
+    def _refresh() -> None:
         write_center_html(
             dest,
             decision=decision,
@@ -1562,13 +1810,37 @@ def cmd_center(args: argparse.Namespace) -> int:
             ingest_path=ingest_path,
             history=history,
             fleet=fleet,
+            drafts=load_center_drafts(cwd / "contracts_drafts") if live else drafts_rows,
+            draft_actions="live" if live else "copy",
         )
+
+    try:
+        _refresh()
         print(f"center  {dest}", file=sys.stderr)
         if fleet and (fleet.get("suite_count") or 0) > 1:
             print(f"fleet   {fleet.get('headline')}", file=sys.stderr)
+        if not live:
+            print(
+                "hint   Static export — Accept is CLI (`draft accept`) or `center --serve`",
+                file=sys.stderr,
+            )
     except Exception as exc:
         print(f"vantage-core center failed: {exc}", file=sys.stderr)
         return 1
+
+    if live:
+        from vantage_core.center import serve_center
+
+        port = int(getattr(args, "port", 8766) or 8766)
+        serve_center(
+            root=cwd,
+            dest=dest,
+            port=port,
+            open_browser=not bool(getattr(args, "no_open", False)),
+            block=True,
+            refresh=_refresh,
+        )
+        return 0
 
     if getattr(args, "open", False):
         try:
@@ -1641,8 +1913,9 @@ def cmd_ci_stub(args: argparse.Namespace) -> int:
 
     kind = str(args.kind)
     dest = Path(args.out) if args.out else default_stub_path(kind)
+    suite = str(getattr(args, "suite", None) or "suites/starter.suite.yaml")
     try:
-        path = write_stub(kind, dest, force=bool(args.force))
+        path = write_stub(kind, dest, force=bool(args.force), suite=suite)
     except FileExistsError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -1651,9 +1924,9 @@ def cmd_ci_stub(args: argparse.Namespace) -> int:
         return 2
     print(f"wrote {path}")
     if kind == "github":
-        print("Next: mark this job as a required check · secret OPENROUTER_API_KEY")
+        print(f"Next: mark this job as a required check · secret OPENROUTER_API_KEY · suite {suite}")
     else:
-        print("Next: include from .gitlab-ci.yml · CI/CD variable OPENROUTER_API_KEY")
+        print(f"Next: include from .gitlab-ci.yml · CI/CD variable OPENROUTER_API_KEY · suite {suite}")
     return 0
 
 
@@ -2054,6 +2327,139 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_p.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     ingest_p.set_defaults(func=cmd_ingest)
 
+    grant_p = sub.add_parser(
+        "grant",
+        help=(
+            "Snapshot grant: LangSmith / Braintrust / sparse GitHub → local files "
+            "(API key or PAT on your machine; Accept still required)"
+        ),
+    )
+    grant_p.add_argument(
+        "source",
+        help="langsmith | braintrust | github | comma-list (e.g. langsmith,github)",
+    )
+    grant_p.add_argument(
+        "repo",
+        nargs="?",
+        default=None,
+        help="For github: owner/name (or use --repo)",
+    )
+    grant_p.add_argument("--project", default=None, help="LangSmith project name")
+    grant_p.add_argument("--experiment", default=None, help="Braintrust experiment id/name")
+    grant_p.add_argument("--path", default="", help="GitHub subpath to sparse-fetch")
+    grant_p.add_argument("--ref", default=None, help="GitHub branch / tag / SHA")
+    grant_p.add_argument(
+        "--out",
+        default=None,
+        help="Output path (default under ./exports or ./.vantage-grant)",
+    )
+    grant_p.add_argument("--root", default=".", help="Project root for combined grant (default .)")
+    grant_p.add_argument("--limit", type=int, default=100, help="Max telemetry rows (default 100)")
+    grant_p.add_argument("--force", action="store_true", help="Overwrite existing snapshot")
+    grant_p.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    grant_p.set_defaults(func=cmd_grant)
+
+    draft_p = sub.add_parser(
+        "draft",
+        help=(
+            "Authorized custom authoring: scan repo / tests / ingest export → "
+            "3–5 custom runtimeai.contract/v1 drafts (not a library suite)"
+        ),
+    )
+    draft_p.add_argument(
+        "repo_or_action",
+        nargs="?",
+        default=".",
+        help="Repo path (default .) or list|show|accept|skip|refine",
+    )
+    draft_p.add_argument(
+        "draft_id",
+        nargs="?",
+        default=None,
+        help="Draft id for show / accept / skip / refine",
+    )
+    draft_p.add_argument(
+        "--ingest",
+        metavar="PATH.json",
+        default=None,
+        help="Optional LangSmith/Braintrust-shaped export (one input, not path identity)",
+    )
+    draft_p.add_argument(
+        "--grant",
+        metavar="SOURCES",
+        default=None,
+        help=(
+            "Fetch grant snapshots into .vantage-grant/ then draft "
+            "(comma list: langsmith,braintrust,github). Tokens stay on your machine."
+        ),
+    )
+    draft_p.add_argument(
+        "--github-repo",
+        default=None,
+        help="owner/name when using --grant github",
+    )
+    draft_p.add_argument(
+        "--langsmith-project",
+        default=None,
+        help="LangSmith project when using --grant langsmith",
+    )
+    draft_p.add_argument(
+        "--braintrust-experiment",
+        default=None,
+        help="Braintrust experiment when using --grant braintrust",
+    )
+    draft_p.add_argument(
+        "--github-path",
+        default="",
+        help="Sparse GitHub subpath for --grant github",
+    )
+    draft_p.add_argument(
+        "--github-ref",
+        default=None,
+        help="GitHub ref for --grant github",
+    )
+    draft_p.add_argument(
+        "--tests",
+        metavar="PATH",
+        default=None,
+        help="Optional extra test file or directory",
+    )
+    draft_p.add_argument(
+        "--write-drafts",
+        metavar="DIR",
+        default="./contracts_drafts",
+        help="Draft directory (default ./contracts_drafts)",
+    )
+    draft_p.add_argument(
+        "--suite",
+        metavar="PATH",
+        default="./suites/starter.suite.yaml",
+        help="Suite YAML to append on accept (default ./suites/starter.suite.yaml)",
+    )
+    draft_p.add_argument(
+        "--into",
+        metavar="DIR",
+        default="./contracts",
+        help="Contracts directory for accept (default ./contracts)",
+    )
+    draft_p.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing drafts",
+    )
+    draft_p.add_argument(
+        "--ci",
+        action="store_true",
+        help="On accept: write GitHub CI stub pointed at the accepted suite (OPENROUTER_API_KEY only)",
+    )
+    draft_p.add_argument(
+        "--editor",
+        default=None,
+        help="Editor for refine (default $VISUAL / $EDITOR)",
+    )
+    draft_p.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    draft_p.set_defaults(func=cmd_draft)
+
     schema_p = sub.add_parser("schema", help="Show frozen decision + contract + suite schema ids")
     schema_p.set_defaults(func=cmd_schema)
 
@@ -2111,6 +2517,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="Overwrite if the destination exists",
+    )
+    ci_stub.add_argument(
+        "--suite",
+        default="suites/starter.suite.yaml",
+        help="Accepted suite path the required check runs (default suites/starter.suite.yaml)",
     )
     ci_stub.set_defaults(func=cmd_ci_stub)
 
@@ -2184,6 +2595,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--open",
         action="store_true",
         help="Open the Center HTML in the default browser",
+    )
+    center_p.add_argument(
+        "--serve",
+        action="store_true",
+        help="Local HTTP cockpit: Accept / Skip / Refine writes this directory (not static export)",
     )
     center_p.set_defaults(func=cmd_center)
 

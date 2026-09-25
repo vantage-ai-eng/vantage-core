@@ -5,7 +5,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.vantage-grant/
 decisions/*.json
 decisions/*.html
 !decisions/.gitkeep
-.DS_Store
