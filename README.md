@@ -11,7 +11,7 @@ Ingest from their telemetry/exports (`ingest` → path plans + optional drafts) 
 `vantage-core draft .` (authorized repo / tests / ingest → custom contracts you Accept);
 plug into CI; return the verdict.
 
-**Version:** 0.1.19 — Authorized custom draft + Center Accept · 0.1.18 Demo docs + Coverage Gap · 0.1.17 Vantage blue · 0.1.16 DEMO chrome · 0.1.15 demo in wheel
+**Version:** 0.1.20 — Ship-gate GitHub Action + Python 3.10/3.11 fix · 0.1.19 Authorized custom draft + Center Accept · 0.1.18 Demo docs + Coverage Gap · 0.1.17 Vantage blue · 0.1.16 DEMO chrome · 0.1.15 demo in wheel
 
 Partner authoring: [CI · your suite](https://www.vantageai.cc/runtimeai/method/cicd#rai-cicd-custom-fixtures)
 
@@ -411,8 +411,8 @@ Cadence re-decide (`suite rerun --trigger cadence`) is the catch for silent same
    - Or tag/release yourself immediately in the same session as the merge:
 
 ```bash
-git tag vantage-core-v0.1.19
-git push origin vantage-core-v0.1.19
+git tag vantage-core-v0.1.20
+git push origin vantage-core-v0.1.20
 # Create a GitHub Release for that tag → workflow publishes
 ```
 
@@ -465,6 +465,12 @@ Then Accept in Control Center (`center --serve`) or `draft accept` → `suite ru
 **Claim:** ingest is one input; drafts are suggestions until they Accept and own the bar.
 See `examples/ingest/README.md`.
 FAQ: https://www.vantageai.cc/runtimeai/faq#rai-faq-accelerate-authoring
+
+## Changelog (0.1.20)
+
+- **Ship-gate GitHub Action** — `uses: vantage-ai-eng/vantage-core@v1`. Four lines instead of authoring the `ci stub` workflow. Restores the last decision from the default branch, re-decides, posts the verdict on the PR, uploads the artifact. `fail-on` defaults to `block`, so a `review` verdict reports without failing the build.
+- **Fixed: `center` and `report` were broken on Python 3.10 and 3.11.** Both modules carried PEP 701 f-string syntax that only parses on 3.12+, while `requires-python` declared `>=3.10`. They load lazily, so `import vantage_core` succeeded and the failure only appeared when you ran the command. Seven lines hoisted; emitted HTML unchanged. Full suite on 3.10: 220 passed, was 8 failed plus a collection error.
+- **Fixed: a test that passed on absence.** `test_scan_skips_node_modules_and_env` asserted `.env` was not in the scanned paths, but `.env` is gitignored — in a fresh clone it passed because the file was missing, not because the scanner skipped it. The fixture is now written at run time.
 
 ## Changelog (0.1.19)
 

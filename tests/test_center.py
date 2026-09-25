@@ -12,6 +12,7 @@ from vantage_core.center import (
     discover_suite_path,
 )
 from vantage_core.ci_stub import github_suite_gate_yaml, gitlab_suite_gate_yaml
+from vantage_core import __version__
 from vantage_core.cli import main
 from vantage_core.suite import attach_baseline_compare, load_suite
 
@@ -458,7 +459,7 @@ def test_demo_offline_prints_coverage(capsys):
     out = capsys.readouterr().out
     assert "SAVED-EXAMPLE DEMO" in out
     assert "Mirrors vantage-core" in out
-    assert "0.1.19" in out
+    assert __version__ in out
     assert "COVERAGE" in out
     assert "Obs shows what ran" in out
     assert "Seen ungated" in out or "Live (gated" in out
@@ -699,7 +700,7 @@ def test_interactive_http_beat_api(tmp_path):
         assert "braintrust_export_sample" in page
         assert "Demo" in page
         assert "DEMO ·" in page
-        assert "0.1.19" in page
+        assert __version__ in page
         assert "Interactive demo" in page
         assert "demo-banner" in page
         assert "thesis-panel" in page

@@ -44,9 +44,9 @@ inputs:
     required: false
     default: ""
   version:
-    description: "pip specifier for the CLI, e.g. '>=0.1.19' or '==0.1.19' to pin."
+    description: "pip specifier for the CLI, e.g. '>=0.1.20' or '==0.1.20' to pin."
     required: false
-    default: ">=0.1.19"
+    default: ">=0.1.20"
   python-version:
     description: "Python used to run the gate."
     required: false

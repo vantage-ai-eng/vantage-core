@@ -16,6 +16,17 @@ from typing import Any
 from vantage_core import __version__
 from vantage_core.report import _esc, extract_report_model, infer_route
 
+
+def _divq(cls: str, inner: str) -> str:
+    """Return <div class="cls">inner</div>.
+
+    Hoisted out of the f-strings below: a backslash inside an f-string *expression*
+    is Python 3.12+ syntax (PEP 701), and this package declares requires-python
+    ">=3.10". Keeping the double-quoted attribute here leaves the emitted HTML
+    byte-identical to what 0.1.19 produced.
+    """
+    return f'<div class="{cls}">{inner}</div>'
+
 _EXIT_FOR_ROUTE = {"pass": 0, "review": 2, "block": 1}
 
 
@@ -1100,7 +1111,7 @@ def center_to_html(model: dict[str, Any]) -> str:
                 f"<td class='muted'>{_esc(counts)}</td>"
                 f"<td class='muted'>{_esc(blocked)}</td>"
                 f"<td class='muted'>{_esc(r.get('bind'))}<div class='why'>{_esc(r.get('when'))}</div>"
-                f"{f'<div class=\"why\">{_esc(cmp_h)}</div>' if cmp_h else ''}</td>"
+                f"{_divq('why', _esc(cmp_h)) if cmp_h else ''}</td>"
                 "</tr>"
             )
         fleet_html = f"""
@@ -1143,7 +1154,7 @@ def center_to_html(model: dict[str, Any]) -> str:
             "<tr>"
             f"<td class='pri'>{_esc(pri)}</td>"
             f"<td><strong>{_esc(cid)}</strong>{flag_html}"
-            f"{f'<div class=\"why\">{_esc(why)}</div>' if why else ''}</td>"
+            f"{_divq('why', _esc(why)) if why else ''}</td>"
             f"<td class='{cls}'>{verdict}</td>"
             f"<td class='muted'>{_esc(note)}</td>"
             "</tr>"
@@ -1478,7 +1489,7 @@ def center_to_html(model: dict[str, Any]) -> str:
                 f"<td class='pri'>{_esc(conf_s)}</td>"
                 f"<td><strong>{_esc(name)}</strong>"
                 f"<div class=\"muted\"><code>{_esc(did)}</code></div>"
-                f"{f'<div class=\"why\">{_esc(quiet)}</div>' if quiet else ''}"
+                f"{_divq('why', _esc(quiet)) if quiet else ''}"
                 f"<div class=\"muted\">sources · {_esc(src)}</div>"
                 f"{acts}</td>"
                 "</tr>"
@@ -1493,9 +1504,9 @@ def center_to_html(model: dict[str, Any]) -> str:
                 "<tr>"
                 f"<td class='pri'>{_esc(sev)}</td>"
                 f"<td><strong>{_esc(name)}</strong>"
-                f"{f'<div class=\"why\">{_esc(reason)}</div>' if reason else ''}"
-                f"{f'<div class=\"muted\">“{_esc(quote)}”</div>' if quote else ''}"
-                f"{f'<div class=\"muted\">starter · {_esc(starter)}</div>' if starter else ''}"
+                f"{_divq('why', _esc(reason)) if reason else ''}"
+                f"{_divq('muted', '“' + _esc(quote) + '”') if quote else ''}"
+                f"{_divq('muted', 'starter · ' + _esc(starter)) if starter else ''}"
                 f"</td>"
                 "</tr>"
             )

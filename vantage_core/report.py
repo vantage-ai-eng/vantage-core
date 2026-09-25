@@ -210,11 +210,14 @@ def decision_to_html(decision: dict[str, Any]) -> str:
     axes_html = []
     for axis in m["axes"]:
         pct = max(0.0, min(100.0, 100.0 * float(axis["value"]) / float(axis["max"] or 5)))
+        # Nested same-quote f-string is Python 3.12+ (PEP 701); this package declares
+        # requires-python ">=3.10". Same rendered output.
+        axis_val = f"{float(axis['value']):.0f}/{float(axis['max']):.0f}"
         axes_html.append(
             "<div class='axis'>"
             f"<span class='axis-name'>{_esc(axis['label'])}</span>"
             f"<span class='axis-track'><i style='width:{pct:.0f}%'></i></span>"
-            f"<span class='axis-val'>{_esc(f'{axis['value']:.0f}/{axis['max']:.0f}')}</span>"
+            f"<span class='axis-val'>{_esc(axis_val)}</span>"
             "</div>"
         )
     facts_html = "".join(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 
 from vantage_core.cli import main
@@ -21,8 +22,30 @@ BEATIT = FIXTURES / "beatit_slice"
 
 
 def test_scan_skips_node_modules_and_env(tmp_path: Path):
-    scan = scan_repo(SAMPLE)
-    rels = [str(p).replace("\\", "/") for p in [s.path for s in scan.strings] + [o.path for o in scan.oracles]]
+    # .env is gitignored, so it cannot be a checked-in fixture. In a fresh clone the
+    # assertion below passed because the file was absent, not because scan_repo skipped
+    # it - the test was green and testing nothing. Write it here so there is always
+    # something to skip.
+    app = tmp_path / "sample_app"
+    shutil.copytree(SAMPLE, app)
+    (app / ".env").write_text(
+        "OPENROUTER_API_KEY=sk-or-v1-THIS-MUST-NOT-APPEAR-IN-DRAFTS\n"
+        "OPENAI_API_KEY=sk-ant-THIS-MUST-NOT-APPEAR-EITHER\n",
+        encoding="utf-8",
+    )
+    assert (app / ".env").is_file()
+
+    scan = scan_repo(app)
+    # Compare paths relative to the scan root. The absolute tmp_path contains the test
+    # name, which contains "node_modules", and would satisfy the substring assertion
+    # below on its own.
+    rels = []
+    for q in [s.path for s in scan.strings] + [o.path for o in scan.oracles]:
+        try:
+            rel = Path(q).resolve().relative_to(app.resolve())
+        except ValueError:
+            rel = Path(q)
+        rels.append(str(rel).replace("\\", "/"))
     blob = " ".join(rels)
     assert "node_modules" not in blob
     assert ".env" not in blob

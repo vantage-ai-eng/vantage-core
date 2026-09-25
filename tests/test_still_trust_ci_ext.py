@@ -14,6 +14,7 @@ from vantage_core.ci_comment import (
     post_gitlab_comment,
 )
 from vantage_core.ci_stub import write_stub
+from vantage_core import __version__
 from vantage_core.cli import main
 from vantage_core.ledger import latest_decision_path, resolve_baseline_spec, save_decision
 
@@ -234,7 +235,7 @@ def test_demo_offline_talk_track(capsys):
     assert "COVERAGE" in out
     assert "Obs shows what ran" in out
     assert "Mirrors vantage-core" in out
-    assert "0.1.19" in out
+    assert __version__ in out
 
 
 def test_demo_offline_save_writes_json_for_report(tmp_path, capsys):
